@@ -1,0 +1,12 @@
+{
+  "name": "andrewmed",
+  "description": "Plugins for Claude Code and pi.",
+  "owner": { "name": "andrewmed" },
+  "plugins": [
+    {
+      "name": "mattermost",
+      "source": "./plugins/mattermost",
+      "description": "Connects each Claude Code session to its own bot and channel in Mattermost."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "mattermost",
+  "description": "Connects each Claude Code session to its own bot and channel in Mattermost: posts of the owner start turns, each text of a turn goes to the channel, and sessions send tasks to each other.",
+  "author": {
+    "name": "andrewmed"
+  },
+  "keywords": [
+    "mattermost",
+    "channel",
+    "mcp"
+  ],
+  "repository": "https://github.com/andrewmed/agent-plugins"
+}

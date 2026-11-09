@@ -1,0 +1,13 @@
+{
+  "name": "mattermost-agents",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun install --no-summary 1>&2 && bun server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "zod": "4.3.6"
+  }
+}
