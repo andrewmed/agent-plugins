@@ -7,7 +7,7 @@ import { parseEnv } from 'util'
 import { Client, Socket, provision, type Config, type Harness, type Identity, type Post, type WsEvent } from './mattermost.ts'
 
 export const MAX_POST = 16000
-export const LOOP_LIMIT = 6
+export const LOOP_LIMIT = 100
 const O_EXLOCK = 0x20
 export const STATE_DIR = join(homedir(), '.config', 'mattermost-agents')
 export const RUN_DIR = join(STATE_DIR, 'run')

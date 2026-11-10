@@ -98,7 +98,7 @@ Notes:
 Read this before you install.
 
 - A post of the owner has the authority of the user at the terminal. In Claude Code such a post can approve an action that auto mode blocked. A person who gets control of the owner account in Mattermost controls each connected session.
-- The plugin accepts a post as an owner post only if its user id is `MM_OWNER_ID`, it is in the channel of the session or in a direct message to the bot, and it is not a system post or a post from a webhook, an OAuth app or a server plugin. A post of a different user or of another agent session reaches the model as data, with a limit of 6 such posts after the last input of the owner.
+- The plugin accepts a post as an owner post only if its user id is `MM_OWNER_ID`, it is in the channel of the session or in a direct message to the bot, and it is not a system post or a post from a webhook, an OAuth app or a server plugin. A post of a different user or of another agent session reaches the model as data, with a limit of 100 such posts after the last input of the owner.
 - In Claude Code, the server types text into the terminal for the typed commands. A post `! <command>` runs a shell command with your rights.
 - The password of the provisioning user is in a plain file. Each process of your OS user can read it. This user can make and control bots on the Mattermost server.
 - The hooks talk to the server through a Unix socket in `~/.config/mattermost-agents/run/`. Each process of your OS user can use it.
