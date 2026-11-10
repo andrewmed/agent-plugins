@@ -16,6 +16,8 @@ const posts: any[] = []
 const reactions: any[] = []
 const files = new Map<string, { name: string; data: ArrayBuffer }>()
 const sockets = new Set<ServerWebSocket<Conn>>()
+// As in Mattermost: a socket and a post set a user to online, and only the close of the socket sets it to offline.
+const online = new Set<string>()
 const team = { id: 'team1', name: 'home' }
 const log: string[] = []
 
@@ -165,17 +167,17 @@ async function api(req: Request, path: string): Promise<Response> {
   }
   if (method === 'POST' && path === '/users/ids') return json((body as string[]).map(id => publicUser(users.get(id)!)))
   if (method === 'POST' && path === '/users/status/ids') {
-    const online = new Set([...sockets].map(ws => ws.data.userId))
     return json((body as string[]).map(user_id => ({ user_id, status: online.has(user_id) ? 'online' : 'offline' })))
   }
   if ((m = /^\/users\/([^/]+)$/.exec(path)) && method === 'GET') {
     const user = users.get(m[1]!)
     return user ? json(publicUser(user)) : fail(404, 'missing')
   }
-  if (method === 'POST' && path === '/posts') {
+  if (method === 'POST' && path.split('?')[0] === '/posts') {
     const channel = channels.get(body.channel_id)
     if (!channel) return fail(404, 'missing')
     if (!channel.members.has(me)) return fail(403, 'api.context.permissions.app_error')
+    if (new URLSearchParams(path.split('?')[1]).get('set_online') !== 'false') online.add(me)
     return json(makePost(channel, me, body), 201)
   }
   if ((m = /^\/posts\/([^/]+)$/.exec(path)) && method === 'GET') {
@@ -262,6 +264,10 @@ Bun.serve<Conn>({
     },
     close(ws) {
       sockets.delete(ws)
+      const userId = ws.data.userId
+      if (!userId) return
+      log.push(`websocket closed ${userId}`)
+      if (![...sockets].some(other => other.data.userId === userId)) online.delete(userId)
     },
     message(ws, raw) {
       const message = JSON.parse(String(raw))
@@ -272,6 +278,7 @@ Bun.serve<Conn>({
           return
         }
         ws.data.userId = entry.userId
+        online.add(entry.userId)
         ws.send(JSON.stringify({ status: 'OK', seq_reply: message.seq }))
         ws.send(JSON.stringify({ event: 'hello', data: {}, broadcast: {}, seq: ++serial }))
         return

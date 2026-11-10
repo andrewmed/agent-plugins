@@ -211,3 +211,26 @@ Pi 1.5.1. Method: the method of "Pi version, 2026-11-09", with two changes. `HOM
 - All six tools passed after that change, with `TOOL <name> <json>` and two pi sessions: `list_sessions`, `read` with and without parameters, `search`, `send` with a file, `download_attachment`, `reply` with a file.
 
 Not tested: a real model with the shorter descriptions. The fake model does not read them.
+
+## Stale `online` status after a pi quit, 2026-11-10
+
+Symptom on the production server: `list_sessions` showed `@agent-plugins-pi` as `online` 8 hours after its post `Session ended`. No pi process ran in that folder, and `pi.log` had no later connection of that bot. 11 other ended pi bots showed `offline`. The ended Claude Code bots showed `offline`.
+
+Cause: `stop` of `pi.ts` closes the socket and then sends the post `Session ended`, and the posts that wait in the queue. The order of the two events in that production case is not proven.
+
+- Mattermost source, branch `master`, read on this date: `createPost` in `server/channels/api4/post.go` calls `SetStatusOnline`, unless the query has `set_online=false`. The hub in `server/channels/app/platform/web_hub.go` calls `QueueSetStatusOffline` when the last socket of a user closes.
+- With no socket, nothing changes the status after that post.
+- `server.ts` sends the post first and closes the socket after it.
+
+Change: `stop` of `pi.ts` sets `setOnline` to false. Then `post` in `session.ts` uses `POST /posts?set_online=false`. The socket closes first, as before, so no post from Mattermost goes to a stopped runtime.
+
+`dev/fake-mattermost.ts` now keeps the status as Mattermost does: a socket and a post give `online`, the close of the last socket of a user gives `offline`, and a post with `set_online=false` does not change the status. It also writes `websocket closed <user id>` in its log.
+
+Method: the method of "Size of the pi request, 2026-11-10". Pi 1.5.1 started, then `/quit`, then `POST /users/status/ids`.
+
+- `pi.ts` of the commit 5afc378: the socket closes, then `POST /posts`. Status `online`.
+- `pi.ts` of the working copy: the socket closes, then `POST /posts?set_online=false`. Status `offline`.
+
+Not corrected: a `POST /posts` request that started before `stop` can end after the socket close, and then the bot stays `online`.
+
+Not tested on the production server. A bot that already has the stale status keeps it until its next start and quit.

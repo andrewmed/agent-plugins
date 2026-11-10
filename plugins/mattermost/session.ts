@@ -270,6 +270,8 @@ export abstract class Session {
   private readonly seen = new Map<string, number>()
   protected out: Promise<unknown> = Promise.resolve()
   protected inbound: Promise<unknown> = Promise.resolve()
+  // A post sets the bot to online. With no socket, nothing sets it to offline again.
+  protected setOnline = true
 
   constructor(protected readonly log: (line: string) => void) {}
 
@@ -301,7 +303,7 @@ export abstract class Session {
     let first: Post | undefined
     let root = rootId
     for (const part of parts) {
-      const made = await this.api!.api<Post>('POST', '/posts', {
+      const made = await this.api!.api<Post>('POST', this.setOnline ? '/posts' : '/posts?set_online=false', {
         channel_id: channelId,
         message: part,
         root_id: root,

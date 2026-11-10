@@ -120,6 +120,7 @@ export class PiBridge extends Session {
   async stop(quit: boolean): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    this.setOnline = false
     clearInterval(this.typing)
     clearTimeout(this.holdTimer)
     this.ws?.stop()

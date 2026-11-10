@@ -57,7 +57,7 @@ function setup(state: { idle?: boolean; signal?: AbortSignal; commands?: any[]; 
   bridge.names.set('a', 'other-cc')
   bridge.api = {
     api: async (_method: string, url: string, body: any) => {
-      if (url === '/posts') posted.push(body)
+      if (url.split('?')[0] === '/posts') posted.push(body)
       if (url === '/reactions') reactions.push(body.emoji_name)
       return { id: 'made' }
     },
@@ -324,6 +324,17 @@ describe('stop', () => {
     const replaced = setup()
     await replaced.bridge.stop(false)
     expect(replaced.messages()).toEqual([])
+  })
+  test('a post after the stop does not set the bot to online', async () => {
+    const { bridge } = setup()
+    const urls: string[] = []
+    const api = bridge.api.api
+    bridge.api.api = (method: string, url: string, body: any) => (urls.push(url), api(method, url, body))
+    bridge.messageEnded({ role: 'assistant', content: [{ type: 'text', text: 'before' }], stopReason: 'stop' })
+    bridge.runSettled()
+    await bridge.out
+    await bridge.stop(true)
+    expect(urls).toEqual(['/posts', '/posts?set_online=false'])
   })
   test('held posts do not go to a stopped runtime', async () => {
     const { bridge, sent, state } = setup({ idle: false })
