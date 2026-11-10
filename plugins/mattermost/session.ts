@@ -193,7 +193,7 @@ const FILES_PROPERTY = { type: 'array', items: { type: 'string' }, description: 
 export const TOOLS = [
   {
     name: 'send',
-    description: 'Send a message to another agent session. Its channel gets the post, and the answer arrives in the thread of that post.',
+    description: 'Send a message to another agent session. Its channel gets the post, and the answer arrives as a post from that session.',
     inputSchema: {
       type: 'object',
       properties: {
