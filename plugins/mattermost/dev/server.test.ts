@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { Bridge, Mailbox, parseVerdict, terminalCommand } from '../server.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, withLast, type Entry } from '../transcript.ts'
 import { LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, route, safeFileName, sessionName, takeLock, type RouteContext } from '../session.ts'
-import { botUsername, markedSession, provision, sessionMarker, type Post } from '../mattermost.ts'
+import { Socket, botUsername, markedSession, provision, sessionMarker, type Post } from '../mattermost.ts'
 import { appendFileSync, mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -917,5 +917,54 @@ describe('terminal commands', () => {
     await bridge.fromOwner(ownerPost('/cost'))
     expect(typed).toEqual([])
     expect(sent.map(note => note.params.content)).toEqual(['/state', '/cost'])
+  })
+})
+
+describe('Socket liveness', () => {
+  async function connected(): Promise<{ socket: any; opens: () => number; actions: string[]; stop: () => void }> {
+    let count = 0
+    const actions: string[] = []
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req, s) => (s.upgrade(req) ? undefined : new Response('no')),
+      websocket: {
+        open() {
+          count++
+        },
+        message(_ws, raw) {
+          actions.push(JSON.parse(String(raw)).action)
+        },
+      },
+    })
+    const socket: any = new Socket(`http://localhost:${server.port}`, 't', () => {}, () => {})
+    socket.start()
+    while (socket.ws.readyState !== WebSocket.OPEN) await Bun.sleep(10)
+    return { socket, opens: () => count, actions, stop: () => (socket.stop(), server.stop(true)) }
+  }
+
+  async function opensAfter(check: (socket: any) => void): Promise<number> {
+    const s = await connected()
+    check(s.socket)
+    s.socket.check()
+    await Bun.sleep(200)
+    s.stop()
+    return s.opens()
+  }
+
+  test('a live connection sends ping', async () => {
+    const s = await connected()
+    s.socket.check()
+    await Bun.sleep(100)
+    s.stop()
+    expect(s.actions).toEqual(['authentication_challenge', 'ping'])
+    expect(s.opens()).toBe(1)
+  })
+
+  test('no message for too long gives a new connection', async () => {
+    expect(await opensAfter(socket => (socket.lastMessage = Date.now() - 80_000))).toBe(2)
+  })
+
+  test('a late tick after sleep gives a new connection', async () => {
+    expect(await opensAfter(socket => (socket.lastTick = Date.now() - 120_000))).toBe(2)
   })
 })

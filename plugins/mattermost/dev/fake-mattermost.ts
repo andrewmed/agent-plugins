@@ -275,6 +275,7 @@ Bun.serve<Conn>({
         ws.send(JSON.stringify({ event: 'hello', data: {}, broadcast: {}, seq: ++serial }))
         return
       }
+      if (message.action === 'ping') ws.send(JSON.stringify({ status: 'OK', seq_reply: message.seq, data: { text: 'pong' } }))
       if (message.action === 'user_typing') log.push(`typing ${ws.data.userId} ${message.data.channel_id}`)
     },
   },

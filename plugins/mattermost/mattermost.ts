@@ -102,11 +102,17 @@ export class Client {
   }
 }
 
+const PING_MS = 30_000
+const SILENCE_LIMIT_MS = 75_000
+
 export class Socket {
   private ws: WebSocket | undefined
   private stopped = false
   private attempt = 0
   private seq = 1
+  private lastMessage = 0
+  private lastTick = Date.now()
+  private timer: ReturnType<typeof setInterval> | undefined
 
   constructor(
     private readonly url: string,
@@ -117,12 +123,16 @@ export class Socket {
 
   start(): void {
     if (this.stopped) return
+    this.timer ??= setInterval(() => this.check(), PING_MS)
+    this.timer.unref()
     const ws = new WebSocket(`${this.url.replace(/^http/, 'ws')}/api/v4/websocket`)
     this.ws = ws
     ws.onopen = () => {
+      this.lastMessage = Date.now()
       ws.send(JSON.stringify({ seq: this.seq++, action: 'authentication_challenge', data: { token: this.token } }))
     }
     ws.onmessage = message => {
+      this.lastMessage = Date.now()
       let event: WsEvent
       try {
         event = JSON.parse(String(message.data))
@@ -135,11 +145,28 @@ export class Socket {
     }
     ws.onerror = () => ws.close()
     ws.onclose = () => {
-      if (this.stopped) return
+      if (this.stopped || ws !== this.ws) return
       const delay = Math.min(30000, 1000 * 2 ** this.attempt++)
       this.log(`websocket closed, new connection in ${delay} ms`)
       setTimeout(() => this.start(), delay)
     }
+  }
+
+  // After sleep a dead connection can stay open with no close event. Node has no terminate(), so do not wait for onclose.
+  private check(): void {
+    const now = Date.now()
+    const slept = now - this.lastTick > 2 * PING_MS
+    this.lastTick = now
+    const ws = this.ws
+    if (this.stopped || ws?.readyState !== WebSocket.OPEN) return
+    if (slept || now - this.lastMessage > SILENCE_LIMIT_MS) {
+      this.log(slept ? 'the computer slept, new connection' : 'no message from the server, new connection')
+      this.ws = undefined
+      ws.close()
+      this.start()
+      return
+    }
+    ws.send(JSON.stringify({ seq: this.seq++, action: 'ping' }))
   }
 
   typing(channelId: string): void {
@@ -149,6 +176,7 @@ export class Socket {
 
   stop(): void {
     this.stopped = true
+    clearInterval(this.timer)
     this.ws?.close()
   }
 }
