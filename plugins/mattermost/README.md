@@ -74,7 +74,7 @@ The flag must be the last one, because it takes more than one value.
 Notes:
 
 - Only an interactive session connects. `claude -p` does not.
-- The session of a project folder gets the bot `<folder>-claude` and a public channel with the same name. The plugin adds you to the channel.
+- The session of a project folder gets the bot `<folder>-cc` and a public channel with the same name. The plugin adds you to the channel.
 - A second session in the same folder does not connect.
 - If Claude Code says `Channels are not currently available` and you have `DISABLE_TELEMETRY` or `DO_NOT_TRACK` set, export `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF=1` in the environment that starts `claude`. A value in `settings.json` is too late.
 - The typed commands (`/compact`, `/clear`, `/context`, `/model`, `/effort`, `! <command>`) need a way to type into the terminal. On macOS the plugin uses `TIOCSTI`. On Linux, where the kernel usually has `TIOCSTI` off, they work only in a [herdr](https://herdr.dev) pane.

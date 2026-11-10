@@ -199,3 +199,15 @@ Method for Claude Code: `CLAUDE_CONFIG_DIR` is an empty folder, and the git conf
 - Pi with this layout: install, an owner post and the update at the start passed.
 
 Not tested: the automatic update of a marketplace in a session, and a session with the plugin from a marketplace.
+
+## Size of the pi request, 2026-11-10
+
+Pi 1.5.1. Method: the method of "Pi version, 2026-11-09", with two changes. `HOME` is an empty folder, so the lock and the log are not those of the real sessions. A copy of `dev/fake-provider.ts` writes the `context` of `streamSimple` to a file. `pi -e <folder>/pi.ts` loads the extension, one time from the working copy and one time from a copy of the commit f252072.
+
+- `context` has only `messages`. The first message has the role `system`, with `sections` (the system prompt) and `toolsAdded` (the tool declarations).
+- `toolsAdded` has 10 tools, 5176 bytes of JSON. The 6 Mattermost tools are 2084 bytes of that.
+- `GUIDELINES` are in `sections.rules`, 1286 bytes. The tool descriptions are not in `sections`, so each description is in the request one time.
+- Shorter parameter descriptions in `TOOLS`: the 6 Mattermost tools go from 2084 to 1958 bytes.
+- All six tools passed after that change, with `TOOL <name> <json>` and two pi sessions: `list_sessions`, `read` with and without parameters, `search`, `send` with a file, `download_attachment`, `reply` with a file.
+
+Not tested: a real model with the shorter descriptions. The fake model does not read them.

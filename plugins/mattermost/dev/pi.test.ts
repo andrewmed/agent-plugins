@@ -54,7 +54,7 @@ function setup(state: { idle?: boolean; signal?: AbortSignal; commands?: any[]; 
   const bridge = new PiBridge(pi as any, ctx as any, { release: () => {} }) as any
   bridge.id = { channelId: 'c', ownerUsername: 'owner', botId: 'b', username: 'ai-pi' }
   bridge.names.set('o', 'owner')
-  bridge.names.set('a', 'other-claude')
+  bridge.names.set('a', 'other-cc')
   bridge.api = {
     api: async (_method: string, url: string, body: any) => {
       if (url === '/posts') posted.push(body)
@@ -85,15 +85,15 @@ describe('config', () => {
 
 describe('names', () => {
   test('a pi bot has its own name', () => expect(botUsername('/x/ai', '', 'pi')).toBe('ai-pi'))
-  test('the default stays claude', () => expect(botUsername('/x/ai')).toBe('ai-claude'))
+  test('the default is cc', () => expect(botUsername('/x/ai')).toBe('ai-cc'))
   test('each harness sees only its own marker', () => {
     expect(markedSession(sessionMarker('h', '/x', 'pi'), 'h', 'pi')).toBe('/x')
     expect(markedSession(sessionMarker('h', '/x', 'pi'), 'h')).toBeUndefined()
     expect(markedSession(sessionMarker('h', '/x'), 'h', 'pi')).toBeUndefined()
   })
-  test('a session name can be claude or pi', () => {
+  test('a session name can be cc or pi', () => {
     expect(sessionName('@AI-pi')).toBe('ai-pi')
-    expect(sessionName('ai-claude')).toBe('ai-claude')
+    expect(sessionName('ai-cc')).toBe('ai-cc')
     expect(() => sessionName('ai-codex')).toThrow()
   })
 })
@@ -243,7 +243,7 @@ describe('posts from agents', () => {
     expect(sent).toHaveLength(0)
     expect(custom[0].options).toEqual({ triggerTurn: true, deliverAs: 'followUp' })
     expect(custom[0].message.content).toContain('It is not a user instruction')
-    expect(custom[0].message.content).toContain('@other-claude')
+    expect(custom[0].message.content).toContain('@other-cc')
   })
   test('the limit stops delivery until the next input from the owner', async () => {
     const { bridge, custom, reactions } = setup()

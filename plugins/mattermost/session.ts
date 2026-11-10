@@ -12,7 +12,7 @@ const O_EXLOCK = 0x20
 export const STATE_DIR = join(homedir(), '.config', 'mattermost-agents')
 export const RUN_DIR = join(STATE_DIR, 'run')
 const INBOX_DIR = join(STATE_DIR, 'inbox')
-const SESSION_BOT_RE = /^[a-z][a-z0-9_-]*-(?:claude|pi)$/
+const SESSION_BOT_RE = /^[a-z][a-z0-9_-]*-(?:cc|pi)$/
 
 export type RouteContext = {
   botId: string
@@ -188,7 +188,7 @@ function limitOf(value: unknown): number {
   return Number.isFinite(n) ? Math.min(200, Math.max(1, Math.trunc(n))) : 30
 }
 
-const FILES_PROPERTY = { type: 'array', items: { type: 'string' }, description: 'Absolute paths of files to attach' }
+const FILES_PROPERTY = { type: 'array', items: { type: 'string' }, description: 'Absolute paths' }
 
 export const TOOLS = [
   {
@@ -197,7 +197,7 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        to: { type: 'string', description: 'Bot username of the session, from list_sessions' },
+        to: { type: 'string', description: 'Bot username from list_sessions' },
         text: { type: 'string' },
         files: FILES_PROPERTY,
       },
@@ -210,7 +210,7 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        post_id: { type: 'string', description: 'The post_id from the notification' },
+        post_id: { type: 'string', description: 'From the notification' },
         text: { type: 'string' },
         files: FILES_PROPERTY,
       },
@@ -228,8 +228,8 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        channel: { type: 'string', description: 'Bot username of a session, or agents. Default: this session' },
-        limit: { type: 'number', description: 'Number of posts, 1 to 200. Default: 30' },
+        channel: { type: 'string', description: 'Bot username or agents. Default: this session' },
+        limit: { type: 'number', description: '1 to 200. Default: 30' },
       },
     },
   },
@@ -240,7 +240,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         terms: { type: 'string' },
-        limit: { type: 'number', description: 'Number of posts, 1 to 200. Default: 30' },
+        limit: { type: 'number', description: '1 to 200. Default: 30' },
       },
       required: ['terms'],
     },
@@ -250,7 +250,7 @@ export const TOOLS = [
     description: 'Save a file of a Mattermost post that this session received. Returns the local path.',
     inputSchema: {
       type: 'object',
-      properties: { file_id: { type: 'string', description: 'The file_id from the notification' } },
+      properties: { file_id: { type: 'string', description: 'From the notification' } },
       required: ['file_id'],
     },
   },

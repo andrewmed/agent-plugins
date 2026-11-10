@@ -11,7 +11,7 @@ const ctx: RouteContext = {
   botId: 'bot',
   ownerId: 'owner',
   channelId: 'session',
-  username: 'ai-claude',
+  username: 'ai-cc',
   channelType: 'O',
   mentions: [],
   threads: new Set(['thread']),
@@ -54,31 +54,31 @@ describe('route', () => {
     expect(route(post({ channel_id: 'x', root_id: 'thread' }), ctx)).toBe('agent')
   })
   test('another user with a mention is an agent', () => {
-    expect(route(post({ channel_id: 'x', message: 'hi @ai-claude.' }), ctx)).toBe('agent')
+    expect(route(post({ channel_id: 'x', message: 'hi @ai-cc.' }), ctx)).toBe('agent')
     expect(route(post({ channel_id: 'x' }), { ...ctx, mentions: ['bot'] })).toBe('agent')
   })
   test('another user elsewhere is ignored', () => {
-    expect(route(post({ channel_id: 'x', message: 'hi @ai-claude2' }), ctx)).toBe('ignore')
+    expect(route(post({ channel_id: 'x', message: 'hi @ai-cc2' }), ctx)).toBe('ignore')
     expect(route(post({ channel_id: 'x' }), { ...ctx, channelType: 'D' })).toBe('ignore')
   })
 })
 
 test('mentionsBot checks the whole name', () => {
-  expect(mentionsBot('@ai-claude', 'ai-claude')).toBe(true)
-  expect(mentionsBot('x @ai-claude, y', 'ai-claude')).toBe(true)
-  expect(mentionsBot('@ai-claude-2', 'ai-claude')).toBe(false)
+  expect(mentionsBot('@ai-cc', 'ai-cc')).toBe(true)
+  expect(mentionsBot('x @ai-cc, y', 'ai-cc')).toBe(true)
+  expect(mentionsBot('@ai-cc-2', 'ai-cc')).toBe(false)
 })
 
 describe('botUsername', () => {
-  test('name and agent type', () => expect(botUsername('/home/user/code/ai')).toBe('ai-claude'))
-  test('lowercase and permitted characters', () => expect(botUsername('/x/My Project.v2')).toBe('my-project-v2-claude'))
+  test('name and agent type', () => expect(botUsername('/home/user/code/ai')).toBe('ai-cc'))
+  test('lowercase and permitted characters', () => expect(botUsername('/x/My Project.v2')).toBe('my-project-v2-cc'))
   test('at most 22 characters', () => {
     const name = botUsername('/x/a-very-long-repository-name-here', 'abc')
     expect(name.length).toBeLessThanOrEqual(22)
-    expect(name.endsWith('-abc-claude')).toBe(true)
+    expect(name.endsWith('-abc-cc')).toBe(true)
   })
-  test('starts with a letter', () => expect(botUsername('/x/2fast')).toBe('fast-claude'))
-  test('no letters', () => expect(botUsername('/x/1234')).toBe('agent-claude'))
+  test('starts with a letter', () => expect(botUsername('/x/2fast')).toBe('fast-cc'))
+  test('no letters', () => expect(botUsername('/x/1234')).toBe('agent-cc'))
 })
 
 test('the session marker gives back the session of this host only', () => {
@@ -201,10 +201,10 @@ describe('Mailbox', () => {
 })
 
 describe('sessionName', () => {
-  test('takes a bot username', () => expect(sessionName('@AI-claude')).toBe('ai-claude'))
+  test('takes a bot username', () => expect(sessionName('@AI-cc')).toBe('ai-cc'))
   test('refuses other channels and paths', () => {
     expect(() => sessionName('town-square')).toThrow()
-    expect(() => sessionName('../users/me-claude')).toThrow()
+    expect(() => sessionName('../users/me-cc')).toThrow()
   })
 })
 
@@ -230,14 +230,14 @@ describe('provision', () => {
       if (path.endsWith('/tokens') && init.method === 'POST') return send({ id: 'new', token: 'secret' })
       if (path.includes('/tokens?')) return send([{ id: 'old' }, { id: 'new' }])
       if (path === '/channels') return send({ id: 'channel' }, 201)
-      if (path.includes('/channels/name/gone-claude')) return send({ id: 'other', creator_id: 'someone' })
+      if (path.includes('/channels/name/gone-cc')) return send({ id: 'other', creator_id: 'someone' })
       if (path === '/users/owner') return send({ username: 'owner' })
       return send({})
     }) as typeof fetch
     return calls
   }
 
-  const mine = { user_id: 'bot', username: 'ai-claude', display_name: 'ai', description: sessionMarker('mac', '/x/ai'), delete_at: 0 }
+  const mine = { user_id: 'bot', username: 'ai-cc', display_name: 'ai', description: sessionMarker('mac', '/x/ai'), delete_at: 0 }
 
   test('the old token is revoked only after the setup is complete', async () => {
     const calls = stub(undefined, [mine])
@@ -252,7 +252,7 @@ describe('provision', () => {
     expect(calls).toContain('POST /users/logout')
   })
 
-  const gone = { user_id: 'b2', username: 'gone-claude', description: sessionMarker('mac', '/no/such/dir'), delete_at: 0 }
+  const gone = { user_id: 'b2', username: 'gone-cc', description: sessionMarker('mac', '/no/such/dir'), delete_at: 0 }
 
   test('a gone session is removed, but not a channel that its bot did not make', async () => {
     const calls = stub(undefined, [mine, gone])
@@ -265,6 +265,16 @@ describe('provision', () => {
     const calls = stub(undefined, [mine, gone])
     await provision(config, 'mac', '/x/ai', project => project === '/no/such/dir', () => {})
     expect(calls).not.toContain('POST /bots/b2/disable')
+  })
+
+  test('a bot with the old marker of this host is removed, also when its session is live', async () => {
+    const old = { user_id: 'b3', username: 'ai-claude', description: 'mm-agent host=mac session=/x/ai', delete_at: 0 }
+    const other = { user_id: 'b4', username: 'ai-claude', description: 'mm-agent host=linux session=/x/ai', delete_at: 0 }
+    const calls = stub(undefined, [mine, old, other])
+    await provision(config, 'mac', '/x/ai', () => true, () => {})
+    expect(calls).toContain('POST /bots/b3/disable')
+    expect(calls).not.toContain('POST /bots/b4/disable')
+    expect(calls).not.toContain('POST /bots/bot/disable')
   })
 })
 
@@ -723,7 +733,7 @@ describe('Bridge', () => {
 
   test('read gives reply rights only for the posts that it shows', async () => {
     const bridge = new Bridge({} as any) as any
-    bridge.id = { channelId: 'c', username: 'ai-claude' }
+    bridge.id = { channelId: 'c', username: 'ai-cc' }
     const base = { create_at: 1, user_id: 'u', message: 'm', root_id: '' }
     bridge.api = {
       api: async (_method: string, path: string) =>
@@ -743,7 +753,7 @@ describe('post retrieval', () => {
   for (const tool of ['read', 'search']) {
     test(`${tool} shows attachments and tracks only the normal posts it shows`, async () => {
       const bridge = new Bridge({} as any) as any
-      bridge.id = { channelId: 'c', username: 'ai-claude', teamId: 't' }
+      bridge.id = { channelId: 'c', username: 'ai-cc', teamId: 't' }
       const normal = post({ id: 'shown', root_id: 'root', file_ids: ['file'], metadata: { files: [{ id: 'file', name: 'report.txt', size: 1 }] } })
       const hidden = post({ id: 'hidden', type: 'system_join_channel', file_ids: ['hidden-file'] })
       bridge.api = {
@@ -1001,7 +1011,7 @@ describe('pull of missed posts', () => {
     const got: string[] = []
     const paths: string[] = []
     const bridge = new Bridge({} as any) as any
-    bridge.id = { botId: 'bot', channelId: 'c', agentsChannelId: 'a', username: 'ai-claude', ownerUsername: 'o' }
+    bridge.id = { botId: 'bot', channelId: 'c', agentsChannelId: 'a', username: 'ai-cc', ownerUsername: 'o' }
     bridge.config = { ownerId: 'owner' }
     bridge.ws = { since: 100 }
     bridge.threadChannels.add('t')
@@ -1022,7 +1032,7 @@ describe('pull of missed posts', () => {
   test('a hello after a reconnect delivers the missed posts in time order, once', async () => {
     const { bridge, got, paths } = bridgeWith({
       c: [{ id: 'late', user_id: 'owner', create_at: 300 }, { id: 'old', user_id: 'owner', create_at: 100 }, { id: 'gone', user_id: 'owner', create_at: 150, delete_at: 160 }],
-      a: [{ id: 'mention', user_id: 'x', message: 'hi @ai-claude', create_at: 250 }, { id: 'other', user_id: 'x', message: 'hi', create_at: 260 }],
+      a: [{ id: 'mention', user_id: 'x', message: 'hi @ai-cc', create_at: 250 }, { id: 'other', user_id: 'x', message: 'hi', create_at: 260 }],
       d: [{ id: 'dm', user_id: 'owner', create_at: 200 }],
       t: [{ id: 'live', user_id: 'x', root_id: 'r', create_at: 120 }],
     })
