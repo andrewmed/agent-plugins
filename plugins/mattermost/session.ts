@@ -265,6 +265,9 @@ export abstract class Session {
   protected readonly delivered = new Set<string>()
   protected readonly deliveredFiles = new Set<string>()
   protected readonly names = new Map<string, string>()
+  protected readonly threadChannels = new Set<string>()
+  // Post id to create_at. A pull after a reconnect overlaps the posts that came live.
+  private readonly seen = new Map<string, number>()
   protected out: Promise<unknown> = Promise.resolve()
   protected inbound: Promise<unknown> = Promise.resolve()
 
@@ -341,26 +344,57 @@ export abstract class Session {
   }
 
   protected onEvent(event: WsEvent): void {
-    if (event.event !== 'posted' && event.event !== 'reaction_added') return
-    this.inbound = this.inbound
-      .then(() => (event.event === 'posted' ? this.onPosted(event) : this.onReaction(event)))
-      .catch(err => this.log(`event handling failed: ${errorText(err)}`))
+    // Read since now: a later reconnect changes it before the queued pull runs.
+    const since = event.event === 'hello' ? this.ws?.since : undefined
+    const work =
+      event.event === 'posted'
+        ? () => this.onPosted(event)
+        : event.event === 'reaction_added'
+          ? () => this.onReaction(event)
+          : since !== undefined
+            ? () => this.pullMissed(since)
+            : undefined
+    if (!work) return
+    this.inbound = this.inbound.then(work).catch(err => this.log(`event handling failed: ${errorText(err)}`))
   }
 
   private async onPosted(event: WsEvent): Promise<void> {
     const post: Post = JSON.parse(event.data.post)
+    await this.onPost(post, String(event.data.channel_type ?? ''), event.data.mentions ? JSON.parse(event.data.mentions) : [])
+  }
+
+  private async onPost(post: Post, channelType: string, mentions: string[]): Promise<void> {
+    if (this.seen.has(post.id)) return
+    this.seen.set(post.id, post.create_at)
     const id = this.id!
     const kind = route(post, {
       botId: id.botId,
       ownerId: this.config!.ownerId,
       channelId: id.channelId,
       username: id.username,
-      channelType: String(event.data.channel_type ?? ''),
-      mentions: event.data.mentions ? JSON.parse(event.data.mentions) : [],
+      channelType,
+      mentions,
       threads: this.threads,
     })
     if (kind === 'owner') await this.fromOwner(post)
     else if (kind === 'agent') await this.fromAgent(post)
+  }
+
+  private async pullMissed(since: number): Promise<void> {
+    const id = this.id!
+    for (const [postId, created] of this.seen) if (created <= since) this.seen.delete(postId)
+    const direct = await this.api!.api('POST', '/channels/direct', [id.botId, this.config!.ownerId])
+    const missed: { post: Post; type: string }[] = []
+    for (const channelId of new Set([id.channelId, id.agentsChannelId, direct.id, ...this.threadChannels])) {
+      const out = await this.api!.api('GET', `/channels/${channelId}/posts?since=${since}`)
+      const posts: Post[] = Object.values(out.posts ?? {})
+      if (posts.length >= 1000) this.log(`the pull of ${channelId} has 1000 posts, so some posts can be missing`)
+      for (const post of posts) {
+        if (post.create_at > since && !post.delete_at) missed.push({ post, type: channelId === direct.id ? 'D' : '' })
+      }
+    }
+    missed.sort((a, b) => a.post.create_at - b.post.create_at)
+    for (const { post, type } of missed) await this.onPost(post, type, [])
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<string> {
@@ -408,6 +442,7 @@ export abstract class Session {
     const made = await this.post(channel.id, text, '', await this.upload(channel.id, files))
     if (!made) throw new Error('the text is empty')
     this.threads.add(made.id)
+    this.threadChannels.add(channel.id)
     return `sent (post_id: ${made.id})`
   }
 
@@ -418,6 +453,7 @@ export abstract class Session {
     const made = await this.post(target.channel_id, text, root, await this.upload(target.channel_id, files))
     if (!made) throw new Error('the text is empty')
     this.threads.add(root)
+    this.threadChannels.add(target.channel_id)
     return `sent in the thread (post_id: ${made.id})`
   }
 

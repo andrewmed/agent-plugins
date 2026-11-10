@@ -956,7 +956,7 @@ describe('Socket liveness', () => {
     s.socket.check()
     await Bun.sleep(100)
     s.stop()
-    expect(s.actions).toEqual(['authentication_challenge', 'ping'])
+    expect(s.actions).toEqual(['authentication_challenge', 'ping', 'ping'])
     expect(s.opens()).toBe(1)
   })
 
@@ -966,5 +966,79 @@ describe('Socket liveness', () => {
 
   test('a late tick after sleep gives a new connection', async () => {
     expect(await opensAfter(socket => (socket.lastTick = Date.now() - 120_000))).toBe(2)
+  })
+})
+
+test('since is the server time of the last pong before the reconnect', async () => {
+  let opens = 0
+  const server = Bun.serve({
+    port: 0,
+    fetch: (req, s) => (s.upgrade(req) ? undefined : new Response('no')),
+    websocket: {
+      open() {
+        opens++
+      },
+      message(ws, raw) {
+        const message = JSON.parse(String(raw))
+        if (message.action === 'ping') ws.send(JSON.stringify({ status: 'OK', seq_reply: message.seq, data: { text: 'pong', server_time: opens * 100 } }))
+      },
+    },
+  })
+  const socket: any = new Socket(`http://localhost:${server.port}`, 't', () => {}, () => {})
+  socket.start()
+  while (socket.serverTime !== 100) await Bun.sleep(10)
+  expect(socket.since).toBeUndefined()
+  socket.lastMessage = 0
+  socket.check()
+  while (socket.serverTime !== 200) await Bun.sleep(10)
+  expect(socket.since).toBe(100)
+  socket.stop()
+  server.stop(true)
+})
+
+describe('pull of missed posts', () => {
+  function bridgeWith(pages: Record<string, Partial<Post>[]>): { bridge: any; got: string[]; paths: string[] } {
+    const got: string[] = []
+    const paths: string[] = []
+    const bridge = new Bridge({} as any) as any
+    bridge.id = { botId: 'bot', channelId: 'c', agentsChannelId: 'a', username: 'ai-claude', ownerUsername: 'o' }
+    bridge.config = { ownerId: 'owner' }
+    bridge.ws = { since: 100 }
+    bridge.threadChannels.add('t')
+    bridge.api = {
+      api: async (_method: string, path: string) => {
+        paths.push(path)
+        if (path === '/channels/direct') return { id: 'd' }
+        const channel = /^\/channels\/(\w+)\/posts/.exec(path)![1]!
+        const list = (pages[channel] ?? []).map(p => post({ channel_id: channel, ...p }))
+        return { order: list.map(p => p.id), posts: Object.fromEntries(list.map(p => [p.id, p])) }
+      },
+    }
+    bridge.fromOwner = async (p: Post) => got.push(`owner ${p.id}`)
+    bridge.fromAgent = async (p: Post) => got.push(`agent ${p.id}`)
+    return { bridge, got, paths }
+  }
+
+  test('a hello after a reconnect delivers the missed posts in time order, once', async () => {
+    const { bridge, got, paths } = bridgeWith({
+      c: [{ id: 'late', user_id: 'owner', create_at: 300 }, { id: 'old', user_id: 'owner', create_at: 100 }, { id: 'gone', user_id: 'owner', create_at: 150, delete_at: 160 }],
+      a: [{ id: 'mention', user_id: 'x', message: 'hi @ai-claude', create_at: 250 }, { id: 'other', user_id: 'x', message: 'hi', create_at: 260 }],
+      d: [{ id: 'dm', user_id: 'owner', create_at: 200 }],
+      t: [{ id: 'live', user_id: 'x', root_id: 'r', create_at: 120 }],
+    })
+    bridge.threads.add('r')
+    bridge.seen.set('live', 120)
+    bridge.onEvent({ event: 'hello', data: {} })
+    await bridge.inbound
+    expect(got).toEqual(['owner dm', 'agent mention', 'owner late'])
+    expect(paths).toContain('/channels/t/posts?since=100')
+  })
+
+  test('the first hello pulls nothing', async () => {
+    const { bridge, paths } = bridgeWith({})
+    bridge.ws = { since: undefined }
+    bridge.onEvent({ event: 'hello', data: {} })
+    await bridge.inbound
+    expect(paths).toEqual([])
   })
 })

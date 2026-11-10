@@ -146,7 +146,8 @@ async function api(req: Request, path: string): Promise<Response> {
     return json({})
   }
   if ((m = /^\/channels\/([^/]+)\/posts/.exec(path)) && method === 'GET') {
-    const list = posts.filter(p => p.channel_id === m![1]).reverse()
+    const since = Number(new URLSearchParams(path.split('?')[1]).get('since') ?? 0)
+    const list = posts.filter(p => p.channel_id === m![1] && p.create_at > since).reverse()
     return json({ order: list.map(p => p.id), posts: Object.fromEntries(list.map(p => [p.id, p])) })
   }
   if ((m = /^\/channels\/([^/]+)$/.exec(path)) && method === 'DELETE') {
@@ -275,7 +276,7 @@ Bun.serve<Conn>({
         ws.send(JSON.stringify({ event: 'hello', data: {}, broadcast: {}, seq: ++serial }))
         return
       }
-      if (message.action === 'ping') ws.send(JSON.stringify({ status: 'OK', seq_reply: message.seq, data: { text: 'pong' } }))
+      if (message.action === 'ping') ws.send(JSON.stringify({ status: 'OK', seq_reply: message.seq, data: { text: 'pong', server_time: Date.now() } }))
       if (message.action === 'user_typing') log.push(`typing ${ws.data.userId} ${message.data.channel_id}`)
     },
   },

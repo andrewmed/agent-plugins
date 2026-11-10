@@ -11,6 +11,7 @@ export type Post = {
   type: string
   props?: Record<string, unknown>
   create_at: number
+  delete_at?: number
   file_ids?: string[]
   metadata?: { files?: { id: string; name: string; size: number }[] }
 }
@@ -113,6 +114,9 @@ export class Socket {
   private lastMessage = 0
   private lastTick = Date.now()
   private timer: ReturnType<typeof setInterval> | undefined
+  private serverTime: number | undefined
+  // Server time of the last pong before this connection. Undefined on the first connection.
+  since: number | undefined
 
   constructor(
     private readonly url: string,
@@ -125,11 +129,13 @@ export class Socket {
     if (this.stopped) return
     this.timer ??= setInterval(() => this.check(), PING_MS)
     this.timer.unref()
+    this.since = this.serverTime
     const ws = new WebSocket(`${this.url.replace(/^http/, 'ws')}/api/v4/websocket`)
     this.ws = ws
     ws.onopen = () => {
       this.lastMessage = Date.now()
       ws.send(JSON.stringify({ seq: this.seq++, action: 'authentication_challenge', data: { token: this.token } }))
+      this.ping(ws)
     }
     ws.onmessage = message => {
       this.lastMessage = Date.now()
@@ -139,6 +145,7 @@ export class Socket {
       } catch {
         return
       }
+      if (typeof event.data?.server_time === 'number') this.serverTime = event.data.server_time
       if (!event.event) return
       if (event.event === 'hello') this.attempt = 0
       this.onEvent(event)
@@ -166,6 +173,10 @@ export class Socket {
       this.start()
       return
     }
+    this.ping(ws)
+  }
+
+  private ping(ws: WebSocket): void {
     ws.send(JSON.stringify({ seq: this.seq++, action: 'ping' }))
   }
 
