@@ -66,6 +66,7 @@ export class Mailbox {
   private queue: string[] = []
   private ownerPosts: (() => void)[] = []
   private fromAgents = 0
+  agentTask = false
 
   userInput(): void {
     this.fromAgents = 0
@@ -115,6 +116,7 @@ export class Mailbox {
     const deliver = this.ownerPosts.shift()
     if (deliver) {
       this.fromAgents = 0
+      this.agentTask = false
       this.busy = true
       deliver()
       return
@@ -123,6 +125,7 @@ export class Mailbox {
     const resolve = this.waiter
     this.waiter = undefined
     this.busy = true
+    this.agentTask = true
     resolve(this.queue.splice(0).join('\n\n'))
   }
 }
@@ -407,6 +410,10 @@ export class Bridge extends Session {
     this.enqueue(() => this.post(channelId, commandMessage(this.id!.ownerUsername, command, watch.output)))
   }
 
+  protected taskFromAgent(): boolean {
+    return this.mailbox.agentTask
+  }
+
   protected async fromAgent(post: Post): Promise<void> {
     const sender = safeName(await this.userName(post.user_id))
     this.track(post)
@@ -467,6 +474,7 @@ export class Bridge extends Session {
         turn.fromMattermost = false
         turn.replyChannel = undefined
         this.mailbox.userInput()
+        this.mailbox.agentTask = false
         this.enqueue(() => this.post(id.channelId, quote(prompt)))
         return
       }

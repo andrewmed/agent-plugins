@@ -198,6 +198,24 @@ describe('Mailbox', () => {
     box.userInput()
     expect(box.offer('again')).toBe(true)
   })
+
+  test('the task is from an agent after agent posts start a turn, until an owner post starts one', () => {
+    const box = new Mailbox()
+    expect(box.agentTask).toBe(false)
+    box.turnStarted()
+    box.offer('one')
+    expect(box.agentTask).toBe(false)
+    box.wait('Stop', '', waiter().resolve)
+    expect(box.agentTask).toBe(true)
+    box.userInput()
+    expect(box.agentTask).toBe(true)
+    let delivered = false
+    box.ownerPost(() => (delivered = true))
+    expect(delivered).toBe(false)
+    box.wait('Stop', '', waiter().resolve)
+    expect(delivered).toBe(true)
+    expect(box.agentTask).toBe(false)
+  })
 })
 
 describe('sessionName', () => {
@@ -421,6 +439,26 @@ describe('assertSendable', () => {
 })
 
 describe('Bridge', () => {
+  test('send is refused while the task is from an agent, and a terminal prompt permits it again', async () => {
+    const bridge = new Bridge({} as any) as any
+    bridge.id = { channelId: 'c', ownerUsername: 'o', botId: 'b' }
+    bridge.api = { api: async () => ({ id: 'p' }) }
+    const reached: string[] = []
+    bridge.send = async (to: string) => {
+      reached.push(to)
+      return 'sent'
+    }
+    bridge.mailbox.wait('Stop', '', () => {})
+    bridge.mailbox.offer('a post from an agent')
+    await expect(bridge.callTool('send', { to: 'x-cc', text: 'do it' })).rejects.toThrow('came from an agent')
+    expect(reached).toEqual([])
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>x</task-notification>' })
+    await expect(bridge.callTool('send', { to: 'x-cc', text: 'do it' })).rejects.toThrow('came from an agent')
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: 'from the terminal' })
+    expect(await bridge.callTool('send', { to: 'x-cc', text: 'do it' })).toBe('sent')
+    expect(reached).toEqual(['x-cc'])
+  })
+
   test('an ask on a turn from Mattermost is denied at once', () => {
     const bridge = new Bridge({} as any) as any
     bridge.id = { channelId: 'c', ownerUsername: 'o' }

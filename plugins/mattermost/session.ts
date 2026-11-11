@@ -282,6 +282,7 @@ export abstract class Session {
 
   protected abstract fromOwner(post: Post): Promise<void>
   protected abstract fromAgent(post: Post): Promise<void>
+  protected abstract taskFromAgent(): boolean
 
   protected async onReaction(_event: WsEvent): Promise<void> {}
 
@@ -421,6 +422,7 @@ export abstract class Session {
     if (!this.id) throw new Error('this session is passive: it has no Mattermost bot')
     switch (name) {
       case 'send':
+        if (this.taskFromAgent()) throw new Error('the current task came from an agent, and only a task from the owner can use send. Tell the owner what you want to send.')
         return this.send(String(args.to ?? ''), String(args.text ?? ''), args.files)
       case 'reply':
         return this.reply(String(args.post_id ?? ''), String(args.text ?? ''), args.files)

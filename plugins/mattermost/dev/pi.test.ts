@@ -255,6 +255,24 @@ describe('posts from agents', () => {
     await bridge.fromAgent(post({ user_id: 'a' }))
     expect(custom).toHaveLength(LOOP_LIMIT + 1)
   })
+  test('send is refused after a post from an agent enters the conversation, until a user message enters', async () => {
+    const { bridge, custom } = setup()
+    const reached: string[] = []
+    bridge.send = async (to: string) => {
+      reached.push(to)
+      return 'sent'
+    }
+    await bridge.fromAgent(post({ user_id: 'a' }))
+    expect(await bridge.callTool('send', { to: 'x-cc', text: 'do it' })).toBe('sent')
+    bridge.messageEnded({ role: 'custom', ...custom[0].message })
+    await expect(bridge.callTool('send', { to: 'x-cc', text: 'do it' })).rejects.toThrow('came from an agent')
+    bridge.messageEnded({ role: 'custom', customType: 'other', content: 'x' })
+    bridge.messageEnded({ role: 'assistant', content: [], stopReason: 'toolUse' })
+    await expect(bridge.callTool('send', { to: 'x-cc', text: 'do it' })).rejects.toThrow('came from an agent')
+    bridge.messageEnded({ role: 'user', content: 'hi' })
+    expect(await bridge.callTool('send', { to: 'x-cc', text: 'do it' })).toBe('sent')
+    expect(reached).toEqual(['x-cc', 'x-cc'])
+  })
 })
 
 describe('end of a run', () => {

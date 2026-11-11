@@ -28,7 +28,7 @@ const GUIDELINES = [
   ...agentRules(TOOL_PREFIX),
 ]
 
-type AgentMessage = { role: string; content?: unknown; stopReason?: string; errorMessage?: string }
+type AgentMessage = { role: string; customType?: string; content?: unknown; stopReason?: string; errorMessage?: string }
 
 const lockKey = (project: string): string => `pi:${project}`
 const fullName = (model: { provider: string; id: string }): string => `${model.provider}/${model.id}`
@@ -89,6 +89,7 @@ export class PiBridge extends Session {
   private fromMattermost = false
   private replyChannel: string | undefined
   private fromAgents = 0
+  private agentTask = false
   private texts: string[] = []
   private failure: string | undefined
   private disposed = false
@@ -153,6 +154,8 @@ export class PiBridge extends Session {
   }
 
   messageEnded(message: AgentMessage): void {
+    if (message.role === 'user') this.agentTask = false
+    else if (message.role === 'custom' && message.customType === 'mattermost') this.agentTask = true
     if (message.role !== 'assistant') return
     this.texts.push(...assistantText(message))
     const failed = message.stopReason === 'error' || message.stopReason === 'aborted'
@@ -232,6 +235,10 @@ export class PiBridge extends Session {
     const text = channelMessage(safeName(await this.userName(post.user_id)), post, files)
     this.deliver(() => this.pi.sendUserMessage(text, { deliverAs: 'steer' }))
     this.react(post.id, 'eyes')
+  }
+
+  protected taskFromAgent(): boolean {
+    return this.agentTask
   }
 
   protected async fromAgent(post: Post): Promise<void> {
