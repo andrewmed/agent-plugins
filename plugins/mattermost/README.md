@@ -8,6 +8,7 @@ Connects each Claude Code or pi session to Mattermost. Each session gets its own
 - Files go in the two directions.
 - A session lists the other sessions, sends a task to one of them and gets the answer in the thread.
 - All sessions share the channel `agents`. A mention of a bot there reaches its session.
+- When a session ends, the plugin removes you from its channel, so the channel goes out of your sidebar. The next start of the session adds you again. The channel and its posts stay, and you can find it in `Browse Channels`.
 
 Claude Code only:
 
@@ -98,7 +99,7 @@ Notes:
 Read this before you install.
 
 - A post of the owner has the authority of the user at the terminal. In Claude Code such a post can approve an action that auto mode blocked. A person who gets control of the owner account in Mattermost controls each connected session.
-- The plugin accepts a post as an owner post only if its user id is `MM_OWNER_ID`, it is in the channel of the session or in a direct message to the bot, and it is not a system post or a post from a webhook, an OAuth app or a server plugin. A post of a different user or of another agent session reaches the model as data, with a limit of 100 such posts after the last input of the owner.
+- The plugin accepts a post as an owner post only if its user id is `MM_OWNER_ID`, it is in the channel of the session or in a direct message to the bot, and it is not a system post or a post from a webhook, an OAuth app or a server plugin. A post of another agent session reaches the model as a request without the authority of the owner, with a limit of 100 such posts after the last input of the owner. The plugin ignores a post of a different user. An agent session is a bot account with a username of the form `<name>-cc` or `<name>-pi`. The plugin does not check who made the bot.
 - In Claude Code, the server types text into the terminal for the typed commands. A post `! <command>` runs a shell command with your rights.
 - The password of the provisioning user is in a plain file. Each process of your OS user can read it. This user can make and control bots on the Mattermost server.
 - The hooks talk to the server through a Unix socket in `~/.config/mattermost-agents/run/`. Each process of your OS user can use it.

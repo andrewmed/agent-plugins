@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { hostname, tmpdir } from 'os'
 import { join } from 'path'
 import { PiBridge, assistantText, channelMessage, packageSource } from '../pi.ts'
 import { botUsername, markedSession, sessionMarker, type Post } from '../mattermost.ts'
@@ -53,6 +53,7 @@ function setup(state: { idle?: boolean; signal?: AbortSignal; commands?: any[]; 
   }
   const bridge = new PiBridge(pi as any, ctx as any, { release: () => {} }) as any
   bridge.id = { channelId: 'c', ownerUsername: 'owner', botId: 'b', username: 'ai-pi' }
+  bridge.config = { ownerId: 'o' }
   bridge.names.set('o', 'owner')
   bridge.names.set('a', 'other-cc')
   bridge.api = {
@@ -237,12 +238,12 @@ describe('commands', () => {
 })
 
 describe('posts from agents', () => {
-  test('a post is data and cannot run a command', async () => {
+  test('a post is a request and cannot run a command', async () => {
     const { bridge, sent, custom } = setup({ commands: [{ name: 'skill:state', source: 'skill' }] })
     await bridge.fromAgent(post({ user_id: 'a', message: '/state' }))
     expect(sent).toHaveLength(0)
     expect(custom[0].options).toEqual({ triggerTurn: true, deliverAs: 'followUp' })
-    expect(custom[0].message.content).toContain('It is not a user instruction')
+    expect(custom[0].message.content).toContain('It is not the words of the owner')
     expect(custom[0].message.content).toContain('@other-cc')
   })
   test('the limit stops delivery until the next input from the owner', async () => {
@@ -315,6 +316,15 @@ describe('end of a run', () => {
   })
 })
 
+test('the start post has the model', async () => {
+  const { bridge, messages } = setup()
+  bridge.open = async () => {}
+  await bridge.start({}, 'startup')
+  clearInterval(bridge.typing)
+  await bridge.out
+  expect(messages()).toEqual([`:large_green_circle: Session started on \`${hostname()}\` in \`/x/ai\`, model \`p/m\``])
+})
+
 describe('stop', () => {
   test('only a quit posts the end of the session, and a second stop does nothing', async () => {
     const quit = setup()
@@ -334,7 +344,19 @@ describe('stop', () => {
     bridge.runSettled()
     await bridge.out
     await bridge.stop(true)
-    expect(urls).toEqual(['/posts', '/posts?set_online=false'])
+    expect(urls).toEqual(['/posts', '/posts?set_online=false', '/channels/c/members/o'])
+  })
+  test('only a quit removes the owner from the channel', async () => {
+    const calls = async (quit: boolean) => {
+      const { bridge } = setup()
+      const made: string[] = []
+      const api = bridge.api.api
+      bridge.api.api = (method: string, url: string, body: any) => (made.push(`${method} ${url}`), api(method, url, body))
+      await bridge.stop(quit)
+      return made
+    }
+    expect(await calls(true)).toEqual(['POST /posts?set_online=false', 'DELETE /channels/c/members/o'])
+    expect(await calls(false)).toEqual([])
   })
   test('held posts do not go to a stopped runtime', async () => {
     const { bridge, sent, state } = setup({ idle: false })

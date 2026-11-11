@@ -141,6 +141,10 @@ async function api(req: Request, path: string): Promise<Response> {
       channel.members.add(body.user_id)
       return json({ channel_id: channel.id, user_id: body.user_id }, 201)
     }
+    if (method === 'DELETE') {
+      channel.members.delete(path.split('/')[4]!)
+      return json({ status: 'OK' })
+    }
     return json([...channel.members].map(user_id => ({ user_id })))
   }
   if ((m = /^\/channels\/([^/]+)\/restore$/.exec(path)) && method === 'POST') {
@@ -179,6 +183,14 @@ async function api(req: Request, path: string): Promise<Response> {
     if (!channel.members.has(me)) return fail(403, 'api.context.permissions.app_error')
     if (new URLSearchParams(path.split('?')[1]).get('set_online') !== 'false') online.add(me)
     return json(makePost(channel, me, body), 201)
+  }
+  if ((m = /^\/posts\/([^/]+)\/patch$/.exec(path)) && method === 'PUT') {
+    const post = posts.find(p => p.id === m![1])
+    if (!post) return fail(404, 'missing')
+    if (post.user_id !== me) return fail(403, 'api.context.permissions.app_error')
+    post.message = body.message
+    post.edit_at = Date.now()
+    return json(post)
   }
   if ((m = /^\/posts\/([^/]+)$/.exec(path)) && method === 'GET') {
     const post = posts.find(p => p.id === m![1])

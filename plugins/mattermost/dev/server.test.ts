@@ -4,7 +4,7 @@ import { TranscriptReader, assistantTexts, bashOutput, commandOutput, withLast, 
 import { LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, route, safeFileName, sessionName, takeLock, type RouteContext } from '../session.ts'
 import { Socket, botUsername, markedSession, provision, sessionMarker, type Post } from '../mattermost.ts'
 import { appendFileSync, mkdtempSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { hostname, tmpdir } from 'os'
 import { join } from 'path'
 
 const ctx: RouteContext = {
@@ -698,6 +698,27 @@ describe('Bridge', () => {
     expect(posted).toEqual(['one', '@o two'])
   })
 
+  test('a row of the turn before, written after the start of this turn, is not posted again', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'mm-')), 't.jsonl')
+    const row = (text: string, timestamp: string) => `${JSON.stringify({ type: 'assistant', timestamp, message: { content: [{ type: 'text', text }] } })}\n`
+    writeFileSync(path, '')
+    const bridge = new Bridge({} as any) as any
+    bridge.id = { channelId: 'c', ownerUsername: 'o' }
+    const posted: string[] = []
+    bridge.api = {
+      api: async (_method: string, _path: string, body: any) => {
+        posted.push(body.message)
+        return { id: 'p' }
+      },
+    }
+    const before = new Date(Date.now() - 50).toISOString()
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: '<channel source="mattermost" channel_id="c">x</channel>', transcript_path: path })
+    appendFileSync(path, row('last text of the turn before', before) + row('one', new Date(Date.now() + 50).toISOString()))
+    bridge.onHook({ hook_event_name: 'Stop', last_assistant_message: 'one', transcript_path: path })
+    await bridge.out
+    expect(posted).toEqual(['@o one'])
+  })
+
   test('a text is posted during the turn and Stop posts only the rest', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'mm-')), 't.jsonl')
     const row = (content: unknown) => `${JSON.stringify({ type: 'assistant', message: { content } })}\n`
@@ -746,6 +767,62 @@ describe('Bridge', () => {
     expect(text).not.toContain('post_id=a')
     expect(bridge.delivered.has('b')).toBe(true)
     expect(bridge.delivered.has('a')).toBe(false)
+  })
+
+  test('the end of the session removes the owner from the channel, after the end post', async () => {
+    const bridge = new Bridge({} as any) as any
+    const calls: string[] = []
+    bridge.id = { channelId: 'c' }
+    bridge.config = { ownerId: 'o' }
+    bridge.api = {
+      api: async (method: string, url: string, body: any) => {
+        calls.push(`${method} ${url} ${body?.message ?? ''}`)
+        return { id: 'made' }
+      },
+    }
+    await bridge.shutdown()
+    expect(calls).toEqual(['POST /posts :red_circle: Session ended', 'DELETE /channels/c/members/o '])
+  })
+
+  describe('start post', () => {
+    function startBridge() {
+      const bridge = new Bridge({} as any) as any
+      const calls: string[] = []
+      bridge.open = async () => {
+        bridge.id = { channelId: 'c' }
+      }
+      bridge.api = {
+        api: async (method: string, url: string, body: any) => {
+          calls.push(`${method} ${url} ${body.message}`)
+          return { id: 'start' }
+        },
+      }
+      return { bridge, calls }
+    }
+
+    test('a model that comes before the start post is in the post', async () => {
+      const { bridge, calls } = startBridge()
+      bridge.sessionSettings({ hook_event_name: 'SessionStart', source: 'startup', model: 'm' })
+      await bridge.connect({}, '/x')
+      await bridge.out
+      expect(calls).toEqual([`POST /posts :large_green_circle: Session started on \`${hostname()}\` in \`/x\`, model \`m\``])
+    })
+
+    test('the model comes by an edit, and later values change nothing', async () => {
+      const { bridge, calls } = startBridge()
+      await bridge.connect({}, '/x')
+      bridge.sessionSettings({ hook_event_name: 'SessionStart', source: 'startup', model: 'm' })
+      await bridge.out
+      bridge.sessionSettings({ hook_event_name: 'UserPromptSubmit' })
+      bridge.sessionSettings({ hook_event_name: 'Stop', effort: { level: 'high' } })
+      bridge.sessionSettings({ hook_event_name: 'Stop', effort: { level: 'low' } })
+      bridge.sessionSettings({ hook_event_name: 'SessionStart', source: 'compact', model: 'n' })
+      await bridge.out
+      expect(calls).toEqual([
+        `POST /posts :large_green_circle: Session started on \`${hostname()}\` in \`/x\``,
+        `PUT /posts/start/patch :large_green_circle: Session started on \`${hostname()}\` in \`/x\`, model \`m\``,
+      ])
+    })
   })
 })
 
@@ -924,9 +1001,95 @@ describe('terminal commands', () => {
   test('other slash commands stay channel messages', async () => {
     const { bridge, typed, sent } = commandBridge(transcript())
     await bridge.fromOwner(ownerPost('/state'))
+    bridge.mailbox.turnFailed()
     await bridge.fromOwner(ownerPost('/cost'))
     expect(typed).toEqual([])
     expect(sent.map(note => note.params.content)).toEqual(['/state', '/cost'])
+  })
+})
+
+describe('an owner post during a turn', () => {
+  const ownerPost = (id: string) => ({ id, channel_id: 'c', user_id: 'o', root_id: '', create_at: 1, message: id })
+
+  function busyBridge() {
+    const sent: string[] = []
+    const bridge = new Bridge({ notification: async (note: any) => sent.push(note.params.content) } as any) as any
+    bridge.id = { channelId: 'c', ownerUsername: 'o', botId: 'b' }
+    bridge.names.set('o', 'n')
+    const reactions: string[] = []
+    bridge.api = {
+      api: async (_method: string, url: string, body: any) => {
+        if (url === '/reactions') reactions.push(`${body.post_id} ${body.emoji_name}`)
+        return { id: 'p' }
+      },
+    }
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: 'from the terminal' })
+    return { bridge, sent, reactions }
+  }
+
+  test('the post waits for the end of the turn', async () => {
+    const { bridge, sent, reactions } = busyBridge()
+    await bridge.fromOwner(ownerPost('one'))
+    await bridge.out
+    expect(sent).toEqual([])
+    expect(reactions).toEqual(['one hourglass_flowing_sand'])
+    bridge.mailbox.wait('Stop', '', () => {})
+    await Bun.sleep(0)
+    await bridge.out
+    expect(sent).toEqual(['one'])
+    expect(reactions).toEqual(['one hourglass_flowing_sand', 'one eyes'])
+    expect(bridge.mailbox.busy).toBe(true)
+  })
+
+  test('each end of a turn delivers one post, and the owner posts go before the agent posts', async () => {
+    const { bridge, sent } = busyBridge()
+    const rewake: string[] = []
+    bridge.mailbox.offer('agent post')
+    await bridge.fromOwner(ownerPost('one'))
+    await bridge.fromOwner(ownerPost('two'))
+    for (const expected of [['one'], ['one', 'two']]) {
+      bridge.mailbox.wait('Stop', '', (text: string) => rewake.push(text))
+      await Bun.sleep(0)
+      expect(sent).toEqual(expected)
+    }
+    expect(rewake).toEqual([''])
+    bridge.mailbox.wait('Stop', '', (text: string) => rewake.push(text))
+    expect(rewake).toEqual(['', '', 'agent post'])
+  })
+
+  test('an interrupt delivers the post', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'mm-')), 't.jsonl')
+    writeFileSync(path, '')
+    const { bridge, sent } = busyBridge()
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: 'from the terminal', transcript_path: path })
+    await bridge.fromOwner(ownerPost('one'))
+    appendFileSync(path, `${JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } })}\n`)
+    await bridge.transcriptTick()
+    await Bun.sleep(0)
+    expect(sent).toEqual(['one'])
+  })
+
+  test('a delivery that fails does not keep the session busy', async () => {
+    const { bridge, sent } = busyBridge()
+    bridge.mailbox.turnFailed()
+    const notification = bridge.mcp.notification
+    bridge.mcp.notification = async () => {
+      throw new Error('closed')
+    }
+    await bridge.fromOwner(ownerPost('one'))
+    expect(bridge.mailbox.busy).toBe(false)
+    bridge.mcp.notification = notification
+    await bridge.fromOwner(ownerPost('two'))
+    expect(sent).toEqual(['two'])
+  })
+
+  test('a permission answer does not wait', async () => {
+    const { bridge, reactions } = busyBridge()
+    bridge.permissions.set('abcde', 'p')
+    await bridge.fromOwner({ ...ownerPost('one'), message: 'yes abcde' })
+    await Bun.sleep(0)
+    expect(reactions).toEqual(['one white_check_mark'])
+    expect(bridge.permissions.size).toBe(0)
   })
 })
 
@@ -1006,6 +1169,35 @@ test('since is the server time of the last pong before the reconnect', async () 
   server.stop(true)
 })
 
+describe('sender of an agent post', () => {
+  test('only a post from a session bot goes to the model, with one user request for each sender', async () => {
+    const users: Record<string, object> = {
+      person: { username: 'eve-cc', is_bot: false, delete_at: 0 },
+      session: { username: 'ai-pi', is_bot: true, delete_at: 0 },
+      otherbot: { username: 'jenkins', is_bot: true, delete_at: 0 },
+      gone: { username: 'old-cc', is_bot: true, delete_at: 5 },
+    }
+    const got: string[] = []
+    const requests: string[] = []
+    const bridge = new Bridge({} as any) as any
+    bridge.id = { botId: 'bot', channelId: 'session', username: 'ai-cc' }
+    bridge.config = { ownerId: 'owner' }
+    bridge.api = {
+      api: async (_method: string, path: string) => {
+        requests.push(path)
+        return users[path.split('/')[2]!]
+      },
+    }
+    bridge.fromAgent = async (p: Post) => got.push(p.id)
+    for (const user_id of Object.keys(users)) {
+      for (const n of [1, 2]) await bridge.onPost(post({ id: `${user_id}${n}`, user_id }), 'O', [])
+    }
+    expect(got).toEqual(['session1', 'session2'])
+    expect(requests).toEqual(['/users/person', '/users/session', '/users/otherbot', '/users/gone'])
+    expect(bridge.names.get('session')).toBe('ai-pi')
+  })
+})
+
 describe('pull of missed posts', () => {
   function bridgeWith(pages: Record<string, Partial<Post>[]>): { bridge: any; got: string[]; paths: string[] } {
     const got: string[] = []
@@ -1017,6 +1209,7 @@ describe('pull of missed posts', () => {
     bridge.threadChannels.add('t')
     bridge.api = {
       api: async (_method: string, path: string) => {
+        if (path === '/users/x') return { username: 'x-cc', is_bot: true, delete_at: 0 }
         paths.push(path)
         if (path === '/channels/direct') return { id: 'd' }
         const channel = /^\/channels\/(\w+)\/posts/.exec(path)![1]!
