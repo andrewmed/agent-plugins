@@ -11,6 +11,7 @@ export type Post = {
   type: string
   props?: Record<string, unknown>
   create_at: number
+  edit_at?: number
   delete_at?: number
   file_ids?: string[]
   metadata?: { files?: { id: string; name: string; size: number }[] }

@@ -295,3 +295,34 @@ Passed on the fake server:
 Not tested: a real Claude Code, and the production server. `shutdown` of `server.ts` waits a maximum of 1500 ms for the end post and the removal together.
 
 Not changed: a session that stops without `shutdown` or `stop` (a kill, a crash) keeps the owner in the channel until its next normal end.
+
+## Job with `/every`, 2026-11-11
+
+Claude Code 2.1.322, macOS.
+
+Change: `schedule.ts` has the parse of a job post, the interval and the state file. `server.ts` has the commands `/every`, `/job`, `/stop`, `/start` and `/drop`, a tick each 30 seconds, and one slot for a job in `Mailbox`. `Mailbox.flush` delivers a held owner post, then the next job step, then agent posts. Pi does not have the function.
+
+Decisions of the owner: no `! <command>` step, because Claude Code starts a model turn after its output and fires no `UserPromptSubmit`. Each run sets the count of agent posts to 0. A failure message has a mention only if the run before it was good. A prompt step that starts no turn in 30 seconds stops the run, and the plugin does not send it a second time.
+
+Measured with the real Claude Code and `dev/fake-mattermost.ts`:
+
+- The channel tag keeps the meta keys `thread_id`, `job`, `run_id` and `step`. `UserPromptSubmit` gets them in `prompt`, and the hook came before the limit of 30 seconds in each run.
+- A prompt step that the server sends immediately after the output row of `/clear` starts a turn in the new conversation. The answer came 1 second after the post of the `/clear` output.
+- `/clear` fires `SessionStart` with the source `clear` (section `Slash commands from a post`). The `wait-start` hook then calls `Mailbox.wait`, which sets `busy` to false and calls `flush`. The job keeps the session while its command step is in progress, so the next step waits for the output. In each run the post of the `/clear` output came before the answer to the prompt.
+- The terminal shows a job prompt as `← mattermost · owner: <text>`.
+
+Method: the method of the section `Plugin for Claude Code and package for pi`, with `--plugin-dir` on the folder `plugins/mattermost` of the working copy and tmux. Start tmux with `env -u HERDR_ENV -u HERDR_PANE_ID` if the shell is in a herdr pane. If not, the server sends the typed command to the herdr pane, and herdr refuses it. `/__test/edit` and `/__test/delete` of the fake server change and delete a post. They send no WebSocket event, so they are not owner input.
+
+Passed on the fake server, with the job `/every 1m`, `/clear`, `Say only the word pineapple.`:
+
+- The answer to `/every` in the thread of the job post, and the state file with the mode 600.
+- The first run 5 minutes and 10 seconds after the job post. Then one run each minute, at the tick after the due time.
+- In each run: the post of the `/clear` output and the answer of the model, the two in the thread and with no mention. `lastRun.result` is `ok`.
+- An edit of the job post: the note in the thread, then the new prompt in the next run.
+- `/exit` and a new start: the same bot, and the start post shows `job each 1m, next run <time>`.
+- The first run after the new start came 5 minutes and 1 second after the start post.
+- A deleted job post: at the next tick the post `The job is deleted: the job post was deleted` in the channel, with a mention, and no state file. `/job` then gives `This session has no job`.
+
+Passed on the production server, in a test of the owner with a session that loads the plugin from the working copy (`--plugin-dir`): `/job` with no job, `/every 5m` with no steps, `/every 1m` with one prompt, the start post with the job after a new start, two runs, and `/drop`.
+
+Not tested with a real Claude Code: a prompt step that starts no turn, a step failure, `/stop` and `/start`, a run while the session is busy, an owner post during a run, a permission request in a run, and the steps `/compact`, `/context`, `/model` and `/effort`. The unit tests have these cases, but not the last two. Not tested: herdr on Linux.

@@ -194,7 +194,7 @@ async function api(req: Request, path: string): Promise<Response> {
   }
   if ((m = /^\/posts\/([^/]+)$/.exec(path)) && method === 'GET') {
     const post = posts.find(p => p.id === m![1])
-    return post ? json(post) : fail(404, 'missing')
+    return post && !post.delete_at ? json(post) : fail(404, 'missing')
   }
   if (method === 'POST' && path.endsWith('/posts/search')) {
     const list = posts.filter(p => p.message.includes(body.terms))
@@ -248,6 +248,15 @@ async function testRoute(req: Request, path: string): Promise<Response> {
       channels.set(channel.id, channel)
     }
     return json(makePost(channel, user.id, body))
+  }
+  if (path === '/edit' || path === '/delete') {
+    const post = posts.find(p => p.id === body.post_id && p.user_id === user.id)
+    if (!post) return fail(400, 'no such post')
+    if (path === '/edit') {
+      post.message = body.message
+      post.edit_at = Date.now()
+    } else post.delete_at = Date.now()
+    return json(post)
   }
   if (path === '/reaction') {
     const post = posts.find(p => p.id === body.post_id)

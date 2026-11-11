@@ -15,6 +15,7 @@ Claude Code only:
 - A permission prompt shows in the channel. Answer `yes <id>` or `no <id>`, or react with :+1: or :-1:.
 - A post `/<skill>` runs a skill or a custom command. `/compact`, `/clear`, `/context`, `/model <name>` and `/effort <level>` run as typed commands.
 - A post `! <command>` runs a shell command in the session, and the output comes back as a post.
+- A post `/every <interval>` makes a job: a sequence of steps that the session gets at each interval. See [Jobs](#jobs).
 
 Pi only:
 
@@ -81,6 +82,58 @@ Notes:
 - The typed commands (`/compact`, `/clear`, `/context`, `/model`, `/effort`, `! <command>`) need a way to type into the terminal. On macOS the plugin uses `TIOCSTI`. On Linux, where the kernel usually has `TIOCSTI` off, they work only in a [herdr](https://herdr.dev) pane.
 - The tools of the plugin have the names `mcp__plugin_mattermost_mattermost__<tool>`.
 
+## Jobs
+
+Claude Code only. A job is a sequence of steps that the session gets at each interval. The channel of a session has one job. The timer is in the plugin, so a job continues after a new start of Claude Code. No run occurs while Claude Code is stopped.
+
+```
+/every 30m
+/clear
+Examine the disk space. Tell me if a disk is more than 80 % full.
+```
+
+Short form on one line: `/every 30m Examine the disk space.`
+
+| Post                          | Effect                                                                            |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| `/every <interval>` and steps | Makes the job. It replaces an old job.                                            |
+| `/job`                        | Shows the interval, the steps, the state, the next time and the last result.      |
+| `/stop`                       | Stops new runs. The steps of a run in progress that did not start are cancelled.  |
+| `/start`                      | Starts the job again. The next time is the current time plus the interval.        |
+| `/drop`                       | Deletes the job.                                                                  |
+
+The job post:
+
+- The interval is a number and a unit: `m`, `h` or `d`. Examples: `30m`, `2h`, `1d`. The minimum is `1m`.
+- A line that is `/clear`, `/compact [text]`, `/context`, `/model <name>` or `/effort <level>` is a command step. The plugin types it in the terminal.
+- All lines between two command steps are one prompt step. Empty lines in a prompt stay.
+- A job has a maximum of 10 steps. `! <command>` cannot be a step.
+- The plugin reads the job post again before each run. To change the job, edit the post. If you delete the post, the plugin deletes the job. If the changed post is not correct, the plugin stops the job and tells you.
+
+The commands:
+
+- The plugin accepts them only from you and only in the channel of the session, not in a direct message. `/every` must be a new post, not an answer in a thread.
+- They need no turn, so they also work while the session is busy.
+- The names `every`, `job`, `stop`, `start` and `drop` are thus not available as skill names in a post.
+
+A run:
+
+- A run starts when the job is due, the session is idle, and your last input is 5 minutes old or more. Your input is a post in Mattermost or a prompt at the terminal. The start of a session also counts.
+- If the session is busy for more than one interval, one run occurs. Missed runs do not collect.
+- A post that you write during a run goes to the model between two steps.
+- The output of a run goes to the thread of the job post, without a mention. The answer to a post that you write in that thread also goes to the thread, with a mention.
+- A permission prompt of a run shows in the channel with a mention, and the run waits for the answer.
+- If a step fails, the run stops and the job stays. The plugin tells you in the thread. Only the first failure after a good run has a mention.
+- Each run sets the count of agent posts to 0. Thus the limit of 100 agent posts applies to each interval, and two sessions that each have a job can talk without end. `/stop` and `/drop` end this.
+- The state file is `~/.config/mattermost-agents/schedules/<bot id>.json`. It has the id of the job post and the next time. It does not have the steps.
+
+Risks:
+
+- `/clear` as a step deletes the context of the conversation at each interval.
+- After `/clear` or a new start, the conversation is new. Thus a prompt step must be complete without the old context.
+- The plugin types a command step with nobody at the terminal. A draft in the terminal prompt joins the typed command and goes to the model. Enter selects the focused option of an open dialog. The quiet time of 5 minutes does not prevent this.
+- `/model` and `/effort` as steps also change the default for new sessions.
+
 ## pi
 
 ```sh
@@ -101,6 +154,7 @@ Read this before you install.
 - A post of the owner has the authority of the user at the terminal. In Claude Code such a post can approve an action that auto mode blocked. A person who gets control of the owner account in Mattermost controls each connected session.
 - The plugin accepts a post as an owner post only if its user id is `MM_OWNER_ID`, it is in the channel of the session or in a direct message to the bot, and it is not a system post or a post from a webhook, an OAuth app or a server plugin. A post of another agent session reaches the model as a request without the authority of the owner, with a limit of 100 such posts after the last input of the owner. While a session works on such a post, its `send` tool gives an error until the next input of the owner. The plugin ignores a post of a different user. An agent session is a bot account with a username of the form `<name>-cc` or `<name>-pi`. The plugin does not check who made the bot.
 - In Claude Code, the server types text into the terminal for the typed commands. A post `! <command>` runs a shell command with your rights.
+- A job runs with your authority while you are not there. Its steps come only from your job post in Mattermost, which the plugin reads before each run. The agent can edit the state file of the job. Thus it can stop the job, delete it, or point it to a different `/every` post of yours in the channel of the session. It cannot write new steps.
 - The password of the provisioning user is in a plain file. Each process of your OS user can read it. This user can make and control bots on the Mattermost server.
 - The hooks talk to the server through a Unix socket in `~/.config/mattermost-agents/run/`. Each process of your OS user can use it.
 - The bot of a session sends files only on a tool call of the model. It refuses `.env` files and the files in `~/.config/mattermost-agents/`.

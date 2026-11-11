@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { Bridge, Mailbox, parseVerdict, terminalCommand } from '../server.ts'
+import { Bridge, Mailbox, jobStepKind, parseVerdict, terminalCommand } from '../server.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, withLast, type Entry } from '../transcript.ts'
 import { LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, route, safeFileName, sessionName, takeLock, type RouteContext } from '../session.ts'
-import { Socket, botUsername, markedSession, provision, sessionMarker, type Post } from '../mattermost.ts'
-import { appendFileSync, mkdtempSync, writeFileSync } from 'fs'
+import { ApiError, Socket, botUsername, markedSession, provision, sessionMarker, type Post } from '../mattermost.ts'
+import { readState } from '../schedule.ts'
+import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from 'fs'
 import { hostname, tmpdir } from 'os'
 import { join } from 'path'
 
@@ -215,6 +216,54 @@ describe('Mailbox', () => {
     box.wait('Stop', '', waiter().resolve)
     expect(delivered).toBe(true)
     expect(box.agentTask).toBe(false)
+  })
+
+  test('an owner post goes before a job step, and a job step goes before agent posts', () => {
+    const box = new Mailbox()
+    const order: string[] = []
+    let steps = 2
+    box.turnStarted()
+    box.offer('agent post')
+    box.startJob(() => {
+      if (!steps) return false
+      order.push(`step ${steps--}`)
+      return true
+    })
+    box.ownerPost(() => order.push('owner post'))
+    expect(order).toEqual([])
+    for (let i = 0; i < 4; i++) box.wait('Stop', '', text => text && order.push(text))
+    expect(order).toEqual(['owner post', 'step 2', 'step 1', 'agent post'])
+  })
+
+  test('a job step is a task of the owner, and a job that has the session keeps it', () => {
+    const box = new Mailbox()
+    let calls = 0
+    box.agentTask = true
+    box.startJob(() => {
+      calls++
+      return true
+    })
+    expect(box.busy).toBe(true)
+    expect(box.agentTask).toBe(false)
+    box.wait('SessionStart', 'clear', () => {})
+    expect(calls).toBe(2)
+    expect(box.busy).toBe(true)
+    box.dropJob()
+    box.turnFailed()
+    expect(calls).toBe(2)
+    expect(box.busy).toBe(false)
+  })
+
+  test('the start of a job sets the count of agent posts to 0, and does not count as owner input', () => {
+    const box = new Mailbox()
+    for (let i = 0; i < LOOP_LIMIT; i++) box.offer(`m${i}`)
+    expect(box.offer('over')).toBe(false)
+    box.ownerInputAt = 5
+    box.startJob(() => false)
+    expect(box.offer('again')).toBe(true)
+    expect(box.ownerInputAt).toBe(5)
+    box.userInput()
+    expect(box.ownerInputAt).toBeGreaterThan(5)
   })
 })
 
@@ -1128,6 +1177,511 @@ describe('an owner post during a turn', () => {
     await Bun.sleep(0)
     expect(reactions).toEqual(['one white_check_mark'])
     expect(bridge.permissions.size).toBe(0)
+  })
+})
+
+describe('job', () => {
+  const stdout = (text: string) => `${JSON.stringify({ type: 'user', message: { content: `<local-command-stdout>${text}</local-command-stdout>` } })}\n`
+  const assistant = (text: string) => `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } })}\n`
+  const promptOf = (note: any) =>
+    `<channel source="plugin:mattermost:mattermost" ${Object.entries(note.params.meta).map(([key, value]) => `${key}="${value}"`).join(' ')}>\n${note.params.content}\n</channel>`
+
+  function jobBridge(statePath = join(mkdtempSync(join(tmpdir(), 'mm-job-')), 'schedules', 'b.json')) {
+    const sent: any[] = []
+    const bridge = new Bridge({ notification: async (note: any) => sent.push(note) } as any) as any
+    bridge.id = { channelId: 'c', ownerUsername: 'o', botId: 'b' }
+    bridge.config = { ownerId: 'o' }
+    bridge.names.set('o', 'o')
+    const posts = new Map<string, any>()
+    const posted: { message: string; root: string }[] = []
+    const reactions: string[] = []
+    bridge.api = {
+      api: async (method: string, url: string, body: any) => {
+        if (method === 'GET' && url.startsWith('/posts/')) {
+          const found = posts.get(url.slice('/posts/'.length))
+          if (!found) throw new ApiError(404, 'missing', url)
+          if (found === 'down') throw new Error('no connection')
+          return found
+        }
+        if (url === '/posts') posted.push({ message: body.message, root: body.root_id })
+        if (url === '/reactions') reactions.push(`${body.post_id} ${body.emoji_name}`)
+        return { id: 'p' }
+      },
+    }
+    const typed: string[] = []
+    bridge.typeText = async (text: string) => {
+      typed.push(text)
+    }
+    const path = join(mkdtempSync(join(tmpdir(), 'mm-job-')), 't.jsonl')
+    writeFileSync(path, '')
+    bridge.transcriptPath = path
+    bridge.jobPath = statePath
+    bridge.quietMs = 0
+    const owner = async (id: string, message: string, fields: Partial<Post> = {}) => {
+      const made = { id, channel_id: 'c', user_id: 'o', root_id: '', create_at: 1, type: '', message, ...fields }
+      posts.set(id, made)
+      await bridge.fromOwner(made)
+      await bridge.out
+      return made
+    }
+    const due = async () => {
+      bridge.job.nextAt = Date.now() - 1
+      await bridge.jobTick()
+    }
+    // The hooks of Claude Code for one turn of a prompt step.
+    const turn = async (note: any, answer: string) => {
+      bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: promptOf(note), transcript_path: path })
+      appendFileSync(path, assistant(answer))
+      bridge.onHook({ hook_event_name: 'Stop', last_assistant_message: answer, transcript_path: path })
+      await bridge.out
+      bridge.mailbox.wait('Stop', '', () => {})
+    }
+    return { bridge, sent, posts, posted, reactions, typed, path, statePath, owner, due, turn }
+  }
+
+  test('jobStepKind accepts the slash commands of the terminal and refuses a ! command', () => {
+    for (const line of ['/clear', '/context', '/compact keep the plan', '/model opus', '/effort low']) expect(jobStepKind(line)).toBe('command')
+    for (const line of ['! ls', '! git status']) expect(jobStepKind(line)).toBe('refused')
+    for (const line of ['/state', '/cost', 'Examine the disk.', '', '!', '!ls']) expect(jobStepKind(line)).toBe('text')
+  })
+
+  test('/every makes the job, saves it and answers in the thread of the job post', async () => {
+    const { bridge, posted, sent, statePath, owner } = jobBridge()
+    const before = Date.now()
+    await owner('j1', '/every 30m\n/clear\nExamine the disk.')
+    expect(sent).toEqual([])
+    expect(posted).toHaveLength(1)
+    expect(posted[0]!.root).toBe('j1')
+    expect(posted[0]!.message).toContain('each 30m, 2 steps')
+    expect(posted[0]!.message).not.toContain('@o')
+    const state = readState(statePath)!
+    expect(state).toEqual(bridge.job)
+    expect(state.postId).toBe('j1')
+    expect(state.paused).toBe(false)
+    expect(state.nextAt).toBeGreaterThanOrEqual(before + 1_800_000)
+  })
+
+  test('a second /every replaces the job', async () => {
+    const { bridge, posted, owner } = jobBridge()
+    await owner('j1', '/every 30m one')
+    await owner('j2', '/every 2h two')
+    expect(bridge.job.postId).toBe('j2')
+    expect(posted[1]).toEqual({ message: expect.stringContaining('each 2h, 1 step. '), root: 'j2' })
+    expect(posted[1]!.message).toContain('replaces the old job')
+  })
+
+  test('a post that is not a correct job makes no job and gives the cause', async () => {
+    const { bridge, posted, reactions, sent, statePath, owner } = jobBridge()
+    await owner('j1', '/every soon do it')
+    await owner('j2', '/every 1m\n! rm -rf x')
+    await owner('j3', '/every 1m do it', { root_id: 'r' })
+    expect(bridge.job).toBeUndefined()
+    expect(existsSync(statePath)).toBe(false)
+    expect(sent).toEqual([])
+    expect(reactions).toEqual(['j1 x', 'j2 x', 'j3 x'])
+    expect(posted.map(made => made.root)).toEqual(['j1', 'j2', 'r'])
+    expect(posted[0]!.message).toContain('@o :warning: No job was made: the interval')
+    expect(posted[1]!.message).toContain('`! rm -rf x` cannot be a step')
+    expect(posted[2]!.message).toContain('as a new post')
+  })
+
+  test('a job command in a direct message is refused and does not go to the model', async () => {
+    const { bridge, posted, sent, owner } = jobBridge()
+    await owner('j1', '/every 1m do it', { channel_id: 'dm' })
+    await owner('j2', '/job', { channel_id: 'dm' })
+    expect(bridge.job).toBeUndefined()
+    expect(sent).toEqual([])
+    expect(posted.map(made => made.message)).toEqual(Array(2).fill('@o A job command works only in the channel of the session.'))
+  })
+
+  test('/job, /stop, /start and /drop with no job, and with text', async () => {
+    const { posted, sent, owner } = jobBridge()
+    for (const name of ['job', 'stop', 'start', 'drop']) await owner(name, `/${name}`)
+    expect(posted.map(made => made.message)).toEqual(Array(4).fill('@o This session has no job.'))
+    await owner('x', '/stop now')
+    expect(posted[4]!.message).toBe('@o `/stop` takes no text.')
+    await owner('y', '/jobs')
+    expect(sent.map(note => note.params.content)).toEqual(['/jobs'])
+  })
+
+  test('/job shows the interval, the steps, the state, the next time and the last result', async () => {
+    const { bridge, posted, owner } = jobBridge()
+    await owner('j1', `/every 30m\n/clear\nExamine the disk.\nSecond line.`)
+    bridge.job.lastRun = { at: Date.UTC(2026, 0, 2, 3, 4), result: 'ok' }
+    bridge.job.nextAt = Date.UTC(2026, 0, 2, 3, 34)
+    await owner('q', '/job')
+    expect(posted[1]!.message).toBe(
+      ['@o :alarm_clock: Job: each 30m, 2 steps', 'State: active', 'Next run: 2026-01-02 03:34 UTC', 'Last run: 2026-01-02 03:04 UTC, ok', '1. `/clear`', '2. Examine the disk.…'].join('\n'),
+    )
+  })
+
+  test('a due job types the command step, then sends the prompt with the ID of the job post, and the output goes to the thread with no mention', async () => {
+    const { bridge, sent, posted, typed, path, statePath, owner, due, turn } = jobBridge()
+    await owner('j1', '/every 30m\n/clear\nExamine the disk.')
+    posted.length = 0
+    const before = Date.now()
+    await due()
+    // The next time is the due time plus the interval, and due() makes the job due 1 ms before now.
+    expect(readState(statePath)!.nextAt).toBeGreaterThanOrEqual(before - 1 + 1_800_000)
+    expect(bridge.mailbox.busy).toBe(true)
+    // The SessionStart hook of /clear must not start the next step before the output of the command.
+    bridge.mailbox.wait('SessionStart', 'clear', () => {})
+    expect(sent).toEqual([])
+    appendFileSync(path, stdout(''))
+    await bridge.commandDone
+    await bridge.out
+    expect(typed).toEqual(['/clear', '\r'])
+    expect(posted).toEqual([{ message: ':white_check_mark: `/clear`', root: 'j1' }])
+    expect(sent).toHaveLength(1)
+    expect(sent[0].params.content).toBe('Examine the disk.')
+    expect(sent[0].params.meta).toMatchObject({ user: 'o', post_id: 'j1', channel_id: 'c', thread_id: 'j1', job: 'run', step: '2' })
+    expect(bridge.promptWait).toBeDefined()
+    expect(bridge.delivered.has('j1')).toBe(true)
+    await turn(sent[0], 'The disk is 40 % full.')
+    expect(bridge.promptWait).toBeUndefined()
+    expect(posted[1]).toEqual({ message: 'The disk is 40 % full.', root: 'j1' })
+    expect(bridge.run).toBeUndefined()
+    expect(bridge.mailbox.busy).toBe(false)
+    expect(readState(statePath)!.lastRun!.result).toBe('ok')
+    await bridge.jobTick()
+    expect(sent).toHaveLength(1)
+  })
+
+  test('two prompt steps: the end of the first turn starts the second step', async () => {
+    const { bridge, sent, owner, due, turn } = jobBridge()
+    await owner('j1', '/every 1m\nOne.\n/context\nTwo.')
+    bridge.job = { ...bridge.job }
+    await due()
+    expect(sent.map(note => note.params.meta.step)).toEqual(['1'])
+    await turn(sent[0], 'first')
+    expect(bridge.run.inCommand).toBe(true)
+  })
+
+  test('no run while the session is busy, while the job is stopped, in the quiet time, and before a hook gave the transcript', async () => {
+    const { bridge, sent, posted, owner, due } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    bridge.mailbox.turnStarted()
+    await due()
+    bridge.mailbox.turnFailed()
+    bridge.commandRunning = true
+    await due()
+    bridge.commandRunning = false
+    bridge.quietMs = 60_000
+    bridge.mailbox.ownerInputAt = Date.now() - 59_000
+    await due()
+    bridge.quietMs = 0
+    await owner('n', '/start')
+    expect(posted.at(-1)!.message).toBe('@o The job is not stopped.')
+    await owner('p', '/stop')
+    await due()
+    expect(sent).toEqual([])
+    expect(posted.at(-1)!.message).toContain('The job is stopped')
+    const before = Date.now()
+    await owner('u', '/start')
+    expect(bridge.job.nextAt).toBeGreaterThanOrEqual(before + 60_000)
+    expect(posted.at(-1)!.message).toContain('@o :white_check_mark: The job runs again: each 1m, 1 step. Next run: ')
+    const known = bridge.transcript.path
+    bridge.transcript.path = undefined
+    await due()
+    expect(sent).toEqual([])
+    bridge.transcript.path = known
+    await due()
+    expect(sent).toHaveLength(1)
+  })
+
+  test('an owner post or a terminal prompt starts the quiet time again', async () => {
+    const { bridge, sent, owner, due } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    bridge.quietMs = 60_000
+    bridge.mailbox.ownerInputAt = 0
+    const prompts = () => sent.filter(note => note.method === 'notifications/claude/channel')
+    bridge.permissions.set('abcde', 'p')
+    await owner('x', 'yes abcde')
+    await due()
+    expect(prompts()).toEqual([])
+    bridge.mailbox.ownerInputAt = 0
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: 'from the terminal' })
+    bridge.mailbox.turnFailed()
+    await due()
+    expect(prompts()).toEqual([])
+    bridge.mailbox.ownerInputAt = 0
+    await due()
+    expect(prompts()).toHaveLength(1)
+  })
+
+  test('a deleted job post deletes the job and tells the owner in the channel', async () => {
+    const { bridge, sent, posts, posted, statePath, owner, due } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    posts.delete('j1')
+    await due()
+    expect(bridge.job).toBeUndefined()
+    expect(existsSync(statePath)).toBe(false)
+    expect(sent).toEqual([])
+    expect(posted.at(-1)).toEqual({ message: '@o :warning: The job is deleted: the job post was deleted.', root: '' })
+    await owner('j2', '/every 1m do it')
+    posts.set('j2', { ...posts.get('j2'), delete_at: 5 })
+    await due()
+    expect(bridge.job).toBeUndefined()
+  })
+
+  test('a job post of a different author, of a different channel or of a webhook deletes the job', async () => {
+    for (const fields of [{ user_id: 'x' }, { channel_id: 'd' }, { props: { from_webhook: 'true' } }, { type: 'system_x' }, { root_id: 'r' }]) {
+      const { bridge, sent, posts, posted, owner, due } = jobBridge()
+      await owner('j1', '/every 1m do it')
+      posts.set('j1', { ...posts.get('j1'), ...fields })
+      await due()
+      expect(bridge.job).toBeUndefined()
+      expect(sent).toEqual([])
+      expect(posted.at(-1)!.message).toContain('is not a post of the owner in the channel of the session')
+    }
+  })
+
+  test('a changed job post gives the new steps and the new interval, with a note in the thread', async () => {
+    const { bridge, sent, posts, posted, owner, due } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    posts.set('j1', { ...posts.get('j1'), message: '/every 2h\ndo the new task', edit_at: 7 })
+    const before = Date.now()
+    await due()
+    expect(posted.at(-1)).toEqual({ message: 'The job post changed. The job is now: each 2h, 1 step.', root: 'j1' })
+    expect(sent[0].params.content).toBe('do the new task')
+    expect(bridge.job.editAt).toBe(7)
+    expect(bridge.job.nextAt).toBeGreaterThanOrEqual(before - 1 + 7_200_000)
+  })
+
+  test('a changed job post that is not correct stops the job, and /start reads it again', async () => {
+    const { bridge, sent, posts, posted, statePath, owner, due } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    posts.set('j1', { ...posts.get('j1'), message: '/every 1m', edit_at: 7 })
+    await due()
+    expect(sent).toEqual([])
+    expect(readState(statePath)!.paused).toBe(true)
+    expect(posted.at(-1)).toEqual({ message: expect.stringContaining('@o :warning: The job post changed and is not correct: the job has no steps. The job is stopped.'), root: 'j1' })
+    await owner('u', '/start')
+    expect(bridge.job.paused).toBe(true)
+    expect(posted.at(-1)!.message).toContain('The job stays stopped: the job post is not correct')
+    posts.set('j1', { ...posts.get('j1'), message: '/every 1m do it again', edit_at: 8 })
+    await owner('u2', '/start')
+    expect(bridge.job.paused).toBe(false)
+    await due()
+    expect(sent[0].params.content).toBe('do it again')
+  })
+
+  test('no run while Mattermost does not give the job post, and the job stays', async () => {
+    const { bridge, sent, posts, posted, owner, due } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    const made = posts.get('j1')
+    posts.set('j1', 'down')
+    posted.length = 0
+    await due()
+    expect(sent).toEqual([])
+    expect(posted).toEqual([])
+    expect(bridge.job.paused).toBe(false)
+    posts.set('j1', made)
+    await bridge.jobTick()
+    expect(sent).toHaveLength(1)
+  })
+
+  test('a command that is not typed stops the run and keeps the job, and only the first failure has a mention', async () => {
+    const { bridge, sent, posted, statePath, owner, due } = jobBridge()
+    await owner('j1', '/every 1m\n/clear\ndo it')
+    bridge.typeText = async () => {
+      throw new Error('Operation not permitted')
+    }
+    for (const mention of ['@o ', '']) {
+      await due()
+      await bridge.commandDone
+      await bridge.out
+      expect(posted.at(-1)).toEqual({ message: `${mention}:warning: The run of the job stopped: \`/clear\` was not typed in the terminal: Operation not permitted. The job stays.`, root: 'j1' })
+      expect(sent).toEqual([])
+      expect(bridge.run).toBeUndefined()
+      expect(bridge.mailbox.busy).toBe(false)
+      expect(bridge.commandRunning).toBe(false)
+    }
+    expect(readState(statePath)!.lastRun!.result).toContain('was not typed')
+    expect(bridge.job.paused).toBe(false)
+  })
+
+  test('a prompt that starts no turn stops the run, and a good run gives the next failure a mention again', async () => {
+    const { bridge, sent, posted, owner, due, turn } = jobBridge()
+    await owner('j1', '/every 1m\ndo it\n/clear')
+    bridge.promptStartMs = 20
+    for (const mention of ['@o ', '']) {
+      await due()
+      await Bun.sleep(60)
+      await bridge.out
+      expect(posted.at(-1)).toEqual({ message: `${mention}:warning: The run of the job stopped: the prompt of step 1 started no turn in 0 seconds. The job stays.`, root: 'j1' })
+      expect(bridge.mailbox.busy).toBe(false)
+      expect(bridge.run).toBeUndefined()
+    }
+    bridge.promptStartMs = 30_000
+    await due()
+    await turn(sent.at(-1), 'done')
+    appendFileSync(bridge.transcript.path, stdout(''))
+    await bridge.commandDone
+    expect(bridge.job.lastRun.result).toBe('ok')
+    bridge.promptStartMs = 20
+    await due()
+    await Bun.sleep(60)
+    await bridge.out
+    expect(posted.at(-1)!.message).toStartWith('@o :warning: The run of the job stopped')
+  })
+
+  test('a turn from the terminal that starts in the wait for the prompt is not made free by the time limit', async () => {
+    const { bridge, owner, due } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    bridge.promptStartMs = 20
+    await due()
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: 'from the terminal' })
+    await Bun.sleep(60)
+    expect(bridge.run).toBeUndefined()
+    expect(bridge.mailbox.busy).toBe(true)
+  })
+
+  test('a prompt that is not sent stops the run', async () => {
+    const { bridge, posted, owner, due } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    bridge.mcp.notification = async () => {
+      throw new Error('closed')
+    }
+    await due()
+    await Bun.sleep(0)
+    await bridge.out
+    expect(posted.at(-1)!.message).toContain('the prompt of step 1 was not sent: closed')
+    expect(bridge.promptWait).toBeUndefined()
+    expect(bridge.mailbox.busy).toBe(false)
+  })
+
+  test('StopFailure and an interrupt in a job turn stop the run, and the next step does not start', async () => {
+    for (const end of ['StopFailure', 'interrupt']) {
+      const { bridge, sent, posted, path, owner, due } = jobBridge()
+      await owner('j1', '/every 1m\none\n/clear\ntwo')
+      await due()
+      bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: promptOf(sent[0]), transcript_path: path })
+      if (end === 'StopFailure') bridge.onHook({ hook_event_name: 'StopFailure', error: 'overloaded' })
+      else {
+        appendFileSync(path, `${JSON.stringify({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } })}\n`)
+        await bridge.transcriptTick()
+      }
+      await bridge.out
+      expect(posted.at(-1)!.root).toBe('j1')
+      expect(posted.at(-1)!.message).toContain(end === 'StopFailure' ? 'the turn stopped with an error: overloaded' : 'the turn was interrupted at the terminal')
+      expect(posted).toHaveLength(2)
+      expect(bridge.run).toBeUndefined()
+      expect(bridge.mailbox.busy).toBe(false)
+      expect(bridge.commandRunning).toBe(false)
+      expect(bridge.job.postId).toBe('j1')
+    }
+  })
+
+  test('/stop cancels the steps of a run that did not start, and /drop deletes the job and its file', async () => {
+    const { bridge, sent, posted, typed, path, statePath, owner, due, turn } = jobBridge()
+    await owner('j1', '/every 1m\none\n/clear\ntwo')
+    await due()
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: promptOf(sent[0]), transcript_path: path })
+    await owner('p', '/stop')
+    expect(bridge.mailbox.busy).toBe(true)
+    await turn(sent[0], 'one is done')
+    expect(typed).toEqual([])
+    expect(sent).toHaveLength(1)
+    expect(bridge.mailbox.busy).toBe(false)
+    expect(readState(statePath)!.paused).toBe(true)
+    await owner('d', '/drop')
+    expect(bridge.job).toBeUndefined()
+    expect(existsSync(statePath)).toBe(false)
+    expect(posted.at(-1)!.message).toBe('@o :white_check_mark: The job is deleted.')
+  })
+
+  test('/drop during a command step: the output frees the session and no step follows', async () => {
+    const { bridge, sent, path, owner, due } = jobBridge()
+    await owner('j1', '/every 1m\n/clear\ntwo')
+    await due()
+    await owner('d', '/drop')
+    appendFileSync(path, stdout(''))
+    await bridge.commandDone
+    expect(sent).toEqual([])
+    expect(bridge.mailbox.busy).toBe(false)
+  })
+
+  test('an owner post goes between two steps, and its answer has the mention', async () => {
+    const { bridge, sent, posted, path, owner, due, turn } = jobBridge()
+    await owner('j1', '/every 1m\none\n/clear\ntwo')
+    posted.length = 0
+    await due()
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: promptOf(sent[0]), transcript_path: path })
+    await owner('x', 'a question')
+    await turn(sent[0], 'one is done')
+    await Bun.sleep(0)
+    expect(sent.map(note => note.params.content)).toEqual(['one', 'a question'])
+    expect(sent[1].params.meta.thread_id).toBeUndefined()
+    await turn(sent[1], 'the answer')
+    expect(posted.at(-1)).toEqual({ message: '@o the answer', root: '' })
+    expect(bridge.run.inCommand).toBe(true)
+  })
+
+  test('an owner post in the thread of the job post gets its answer in that thread, with the mention', async () => {
+    const { sent, posted, owner, turn } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    await owner('x', 'why?', { root_id: 'j1' })
+    await owner('y', 'other thread', { root_id: 'r' })
+    expect(sent[0].params.meta.thread_id).toBe('j1')
+    await turn(sent[0], 'because')
+    expect(posted.at(-1)).toEqual({ message: '@o because', root: 'j1' })
+    await Bun.sleep(0)
+    expect(sent[1].params.meta.thread_id).toBeUndefined()
+  })
+
+  test('a new session with the same state file runs a missed job one time', async () => {
+    const first = jobBridge()
+    await first.owner('j1', '/every 1m do it')
+    first.bridge.job.nextAt = Date.now() - 200_000
+    first.bridge.saveJob()
+    const { bridge, sent, posts, turn } = jobBridge(first.statePath)
+    posts.set('j1', first.posts.get('j1'))
+    bridge.job = readState(first.statePath)
+    const before = Date.now()
+    await bridge.jobTick()
+    expect(sent).toHaveLength(1)
+    expect(readState(first.statePath)!.nextAt).toBeGreaterThanOrEqual(before + 60_000)
+    await turn(sent[0], 'done')
+    await bridge.jobTick()
+    expect(sent).toHaveLength(1)
+  })
+
+  test('a run sets the count of agent posts to 0', async () => {
+    const { bridge, owner, due } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    for (let i = 0; i < LOOP_LIMIT; i++) bridge.mailbox.offer(`m${i}`)
+    expect(bridge.mailbox.offer('over')).toBe(false)
+    await due()
+    expect(bridge.mailbox.offer('again')).toBe(true)
+  })
+
+  test('send works in a job step that follows a task from an agent', async () => {
+    const { bridge, owner, due } = jobBridge()
+    bridge.send = async () => 'sent'
+    await owner('j1', '/every 1m do it')
+    bridge.mailbox.agentTask = true
+    await due()
+    expect(await bridge.callTool('send', { to: 'x-cc', text: 'do it' })).toBe('sent')
+  })
+
+  test('the start post shows the job', async () => {
+    const first = jobBridge()
+    await first.owner('j1', '/every 30m do it')
+    first.bridge.job.nextAt = Date.UTC(2026, 0, 2, 3, 34)
+    const { bridge, posts } = jobBridge()
+    posts.set('j1', first.posts.get('j1'))
+    const calls: string[] = []
+    const api = bridge.api.api
+    bridge.api.api = async (method: string, url: string, body: any) => {
+      if (method !== 'GET') calls.push(`${method} ${url} ${body.message}`)
+      return method === 'GET' ? api(method, url, body) : { id: 'start' }
+    }
+    bridge.start = { text: 'Session started' }
+    bridge.showStart()
+    await bridge.showJobAtStart(first.bridge.job)
+    await bridge.out
+    expect(calls).toEqual(['POST /posts Session started', 'PUT /posts/start/patch Session started, job each 30m, next run 2026-01-02 03:34 UTC'])
   })
 })
 
