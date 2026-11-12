@@ -363,9 +363,9 @@ describe('stop', () => {
     bridge.runSettled()
     await bridge.out
     await bridge.stop(true)
-    expect(urls).toEqual(['/posts', '/posts?set_online=false', '/channels/c/members/o'])
+    expect(urls).toEqual(['/posts', '/posts?set_online=false'])
   })
-  test('only a quit removes the owner from the channel', async () => {
+  test('the stop does not remove the owner from the channel', async () => {
     const calls = async (quit: boolean) => {
       const { bridge } = setup()
       const made: string[] = []
@@ -374,7 +374,7 @@ describe('stop', () => {
       await bridge.stop(quit)
       return made
     }
-    expect(await calls(true)).toEqual(['POST /posts?set_online=false', 'DELETE /channels/c/members/o'])
+    expect(await calls(true)).toEqual(['POST /posts?set_online=false'])
     expect(await calls(false)).toEqual([])
   })
   test('held posts do not go to a stopped runtime', async () => {

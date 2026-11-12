@@ -133,7 +133,6 @@ export class PiBridge extends Session {
     if (this.id) {
       if (quit) {
         this.enqueue(() => this.post(this.id!.channelId, ':red_circle: Session ended'))
-        this.hideChannel()
       }
       await Promise.race([this.out, sleep(OUT_WAIT_MS, undefined, { ref: false })])
     }

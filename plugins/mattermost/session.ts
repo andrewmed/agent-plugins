@@ -340,11 +340,6 @@ export abstract class Session {
     return first
   }
 
-  // The channel of an ended session goes out of the sidebar of the owner. provision adds the owner again at the next start.
-  protected hideChannel(): void {
-    this.enqueue(() => this.api!.api('DELETE', `/channels/${this.id!.channelId}/members/${this.config!.ownerId}`))
-  }
-
   private async upload(channelId: string, files: unknown): Promise<string[]> {
     const ids: string[] = []
     for (const path of (files as string[] | undefined) ?? []) {

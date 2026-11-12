@@ -296,6 +296,14 @@ Not tested: a real Claude Code, and the production server. `shutdown` of `server
 
 Not changed: a session that stops without `shutdown` or `stop` (a kill, a crash) keeps the owner in the channel until its next normal end.
 
+## Owner stays in the channel of an ended session, 2026-11-12
+
+Change: `hideChannel` is removed from `session.ts`, `server.ts` and `pi.ts`. The end of a session does not remove the owner from its channel. The post `Session ended` stays. This replaces the change of "Channel of an ended session, 2026-11-11".
+
+Passed: `bun test dev`. `pi.ts` built with `bun build --target=node` loads in Node 26.13.0.
+
+Not tested: a real Claude Code, a real pi, and the production server.
+
 ## Job with `/every`, 2026-11-11
 
 Claude Code 2.1.322, macOS.

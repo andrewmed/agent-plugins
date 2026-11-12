@@ -890,7 +890,7 @@ describe('Bridge', () => {
     expect(bridge.delivered.has('a')).toBe(false)
   })
 
-  test('the end of the session removes the owner from the channel, after the end post', async () => {
+  test('the end of the session posts the end and keeps the owner in the channel', async () => {
     const bridge = new Bridge({} as any) as any
     const calls: string[] = []
     bridge.id = { channelId: 'c' }
@@ -902,7 +902,7 @@ describe('Bridge', () => {
       },
     }
     await bridge.shutdown()
-    expect(calls).toEqual(['POST /posts :red_circle: Session ended', 'DELETE /channels/c/members/o '])
+    expect(calls).toEqual(['POST /posts :red_circle: Session ended'])
   })
 
   describe('start post', () => {

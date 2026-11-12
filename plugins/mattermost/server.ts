@@ -332,7 +332,6 @@ export class Bridge extends Session {
     this.mailbox.close()
     if (this.id) {
       this.enqueue(() => this.post(this.id!.channelId, ':red_circle: Session ended'))
-      this.hideChannel()
       await Promise.race([this.out, Bun.sleep(1500)])
     }
     this.ws?.stop()

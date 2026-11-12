@@ -8,7 +8,6 @@ Connects each Claude Code or pi session to Mattermost. Each session gets its own
 - Files go in the two directions.
 - A session lists the other sessions, sends a task to one of them and gets the answer in the thread.
 - All sessions share the channel `agents`. A mention of a bot there reaches its session.
-- When a session ends, the plugin removes you from its channel, so the channel goes out of your sidebar. The next start of the session adds you again. The channel and its posts stay, and you can find it in `Browse Channels`.
 
 Claude Code only:
 
