@@ -338,3 +338,17 @@ Change: `untilStarted` in `session.ts` tries `provision` again after each failur
 Tested: `bun test dev`, and `untilStarted` in Node 26.
 
 Not tested: a real Claude Code or a real pi that starts before Mattermost, on the fake server or on the production server.
+
+## Reaction that the web client does not show, 2026-11-12
+
+Mattermost 11.7.15 web client in Brave, production server, Claude Code in the herdr container on the host of Mattermost.
+
+Measured: the bot reacted to a post of the owner some milliseconds after the post, and the tab that sent the post did not show the reaction. A tab that loaded after that showed the reaction, and so did the mobile client. The HTTP response to `POST /api/v4/posts` had `"metadata":{}`.
+
+Cause, from the code of the web client: `createPost` stores the HTTP response with `receivedPost`, and `storeReactionsForPost` replaces the reactions of the post with the reactions of that response, which has none. A `reaction_added` event that arrives before the response is lost in that tab until a reload. The order of the event and of the response in the tab was not recorded.
+
+Change: `react` in `session.ts` sends each reaction after `reactionDelayMs`, 200 ms. Nothing waits for the reaction, so the delivery of the post to the agent does not wait. A response that arrives more than 200 ms after the `posted` event, for example after a TCP retransmission, still loses the reaction.
+
+Tested: `bun test dev`, and `react` in Node 26.
+
+Not tested: a real Claude Code or a real pi with the delay, on the fake server or on the production server. The fake server does not have the web client.

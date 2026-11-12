@@ -1136,6 +1136,7 @@ describe('an owner post during a turn', () => {
     const sent: string[] = []
     const bridge = new Bridge({ notification: async (note: any) => sent.push(note.params.content) } as any) as any
     bridge.id = { channelId: 'c', ownerUsername: 'o', botId: 'b' }
+    bridge.reactionDelayMs = 0
     bridge.names.set('o', 'n')
     const reactions: string[] = []
     bridge.api = {
@@ -1212,6 +1213,21 @@ describe('an owner post during a turn', () => {
     expect(reactions).toEqual(['one white_check_mark'])
     expect(bridge.permissions.size).toBe(0)
   })
+
+  test('a reaction goes to Mattermost after a delay', async () => {
+    const { bridge, reactions } = busyBridge()
+    bridge.reactionDelayMs = 50
+    bridge.react('one', 'eyes')
+    await Bun.sleep(10)
+    expect(reactions).toEqual([])
+    await Bun.sleep(80)
+    expect(reactions).toEqual(['one eyes'])
+  })
+
+  test('the delay of a reaction is 200 ms', () => {
+    const bridge = new Bridge({ notification: async () => {} } as any) as any
+    expect(bridge.reactionDelayMs).toBe(200)
+  })
 })
 
 describe('job', () => {
@@ -1225,6 +1241,7 @@ describe('job', () => {
     const bridge = new Bridge({ notification: async (note: any) => sent.push(note) } as any) as any
     bridge.id = { channelId: 'c', ownerUsername: 'o', botId: 'b' }
     bridge.config = { ownerId: 'o' }
+    bridge.reactionDelayMs = 0
     bridge.names.set('o', 'o')
     const posts = new Map<string, any>()
     const posted: { message: string; root: string }[] = []

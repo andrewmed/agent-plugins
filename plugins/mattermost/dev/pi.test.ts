@@ -54,6 +54,7 @@ function setup(state: { idle?: boolean; signal?: AbortSignal; commands?: any[]; 
   const bridge = new PiBridge(pi as any, ctx as any, { release: () => {} }) as any
   bridge.id = { channelId: 'c', ownerUsername: 'owner', botId: 'b', username: 'ai-pi' }
   bridge.config = { ownerId: 'o' }
+  bridge.reactionDelayMs = 0
   bridge.names.set('o', 'owner')
   bridge.names.set('a', 'other-cc')
   bridge.api = {

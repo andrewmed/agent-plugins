@@ -289,6 +289,7 @@ export abstract class Session {
   protected inbound: Promise<unknown> = Promise.resolve()
   // A post sets the bot to online. With no socket, nothing sets it to offline again.
   protected setOnline = true
+  protected reactionDelayMs = 200
 
   constructor(protected readonly log: (line: string) => void) {}
 
@@ -359,11 +360,18 @@ export abstract class Session {
     for (const file of attachments(post)) this.deliveredFiles.add(file.id)
   }
 
+  // The Mattermost web client that sent a post replaces the reactions of the post with the empty metadata of the
+  // HTTP response. A reaction that arrives before that response goes out of view until a reload.
   protected react(postId: string, emoji: string): void {
     if (!this.api || !this.id) return
-    this.api
-      .api('POST', '/reactions', { user_id: this.id.botId, post_id: postId, emoji_name: emoji })
-      .catch(err => this.log(`reaction failed: ${errorText(err)}`))
+    const api = this.api
+    const botId = this.id.botId
+    const send = () =>
+      api
+        .api('POST', '/reactions', { user_id: botId, post_id: postId, emoji_name: emoji })
+        .catch(err => this.log(`reaction failed: ${errorText(err)}`))
+    if (this.reactionDelayMs) setTimeout(send, this.reactionDelayMs)
+    else send()
   }
 
   protected async userName(userId: string): Promise<string> {
