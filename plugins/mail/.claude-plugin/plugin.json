@@ -1,0 +1,13 @@
+{
+  "name": "mail",
+  "description": "Reads two mailboxes over IMAP, saves drafts and trashes messages. It does not send.",
+  "author": {
+    "name": "andrewmed"
+  },
+  "keywords": [
+    "mail",
+    "imap",
+    "skill"
+  ],
+  "repository": "https://github.com/andrewmed/agent-plugins"
+}

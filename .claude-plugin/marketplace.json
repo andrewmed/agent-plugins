@@ -7,6 +7,11 @@
       "name": "mattermost",
       "source": "./plugins/mattermost",
       "description": "Connects each Claude Code session to its own bot and channel in Mattermost."
+    },
+    {
+      "name": "mail",
+      "source": "./plugins/mail",
+      "description": "Reads two mailboxes over IMAP, saves drafts and trashes messages. It does not send."
     }
   ]
 }
