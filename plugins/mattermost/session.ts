@@ -4,7 +4,7 @@ import { createServer } from 'net'
 import { homedir, hostname } from 'os'
 import { basename, join, sep } from 'path'
 import { parseEnv } from 'util'
-import { Client, Socket, provision, type Config, type Harness, type Identity, type Post, type WsEvent } from './mattermost.ts'
+import { ApiError, Client, Socket, provision, type Config, type Harness, type Identity, type Post, type WsEvent } from './mattermost.ts'
 
 export const MAX_POST = 16000
 export const LOOP_LIMIT = 100
@@ -158,6 +158,22 @@ export async function isLive(key: string): Promise<boolean> {
   return false
 }
 
+// Mattermost can start after the agent, for example after a boot of the host. A status below 500 is an answer
+// of Mattermost, and a new try does not change it.
+export async function untilStarted<T>(start: () => Promise<T>, log: (line: string) => void, stopped: () => boolean, baseMs = 1000): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await start()
+    } catch (err) {
+      if ((err instanceof ApiError && err.status < 500) || stopped()) throw err
+      const delay = Math.min(30000, baseMs * 2 ** attempt)
+      log(`start failed, new try in ${delay} ms: ${errorText(err)}`)
+      await new Promise(resolve => setTimeout(resolve, delay).unref())
+      if (stopped()) throw err
+    }
+  }
+}
+
 export function readConfig(path = join(STATE_DIR, '.env'), env: Record<string, string | undefined> = process.env): Config | undefined {
   let file: Record<string, string> = {}
   try {
@@ -286,9 +302,15 @@ export abstract class Session {
 
   protected async onReaction(_event: WsEvent): Promise<void> {}
 
-  protected async open(config: Config, project: string, harness: Harness, live: (project: string) => boolean | Promise<boolean>): Promise<void> {
+  protected async open(
+    config: Config,
+    project: string,
+    harness: Harness,
+    live: (project: string) => boolean | Promise<boolean>,
+    stopped: () => boolean = () => false,
+  ): Promise<void> {
     this.config = config
-    this.id = await provision(config, hostname(), project, live, this.log, harness)
+    this.id = await untilStarted(() => provision(config, hostname(), project, live, this.log, harness), this.log, stopped)
     this.api = new Client(config.url, this.id.botToken)
     this.ws = new Socket(config.url, this.id.botToken, event => this.onEvent(event), this.log)
     this.ws.start()

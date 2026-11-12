@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Bridge, Mailbox, jobStepKind, parseVerdict, terminalCommand } from '../server.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, withLast, type Entry } from '../transcript.ts'
-import { LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, route, safeFileName, sessionName, takeLock, type RouteContext } from '../session.ts'
+import { LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, route, safeFileName, sessionName, takeLock, untilStarted, type RouteContext } from '../session.ts'
 import { ApiError, Socket, botUsername, markedSession, provision, sessionMarker, type Post } from '../mattermost.ts'
 import { readState } from '../schedule.ts'
 import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from 'fs'
@@ -272,6 +272,40 @@ describe('sessionName', () => {
   test('refuses other channels and paths', () => {
     expect(() => sessionName('town-square')).toThrow()
     expect(() => sessionName('../users/me-cc')).toThrow()
+  })
+})
+
+describe('untilStarted', () => {
+  function failing(errors: unknown[]) {
+    let calls = 0
+    const start = async () => {
+      const err = errors[calls++]
+      if (err) throw err
+      return 'id'
+    }
+    return { start, calls: () => calls }
+  }
+
+  test('a connection failure and a status 502 get a new try', async () => {
+    const lines: string[] = []
+    const run = failing([new TypeError('fetch failed'), new ApiError(502, '', '/users/login')])
+    expect(await untilStarted(run.start, line => lines.push(line), () => false, 1)).toBe('id')
+    expect(run.calls()).toBe(3)
+    expect(lines).toEqual(['start failed, new try in 1 ms: fetch failed', 'start failed, new try in 2 ms: HTTP 502  on /users/login'])
+  })
+
+  test('an answer of Mattermost with a status below 500 ends the start', async () => {
+    const run = failing([new ApiError(401, 'api.user.login.invalid_credentials_email_username', '/users/login')])
+    await expect(untilStarted(run.start, () => {}, () => false, 1)).rejects.toThrow('HTTP 401')
+    expect(run.calls()).toBe(1)
+  })
+
+  test('a stopped session gets no new try', async () => {
+    let stopped = false
+    const run = failing([new TypeError('fetch failed'), new TypeError('fetch failed')])
+    const result = untilStarted(run.start, () => (stopped = true), () => stopped, 1)
+    await expect(result).rejects.toThrow('fetch failed')
+    expect(run.calls()).toBe(1)
   })
 })
 

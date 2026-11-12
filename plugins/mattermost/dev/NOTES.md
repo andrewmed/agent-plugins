@@ -326,3 +326,15 @@ Passed on the fake server, with the job `/every 1m`, `/clear`, `Say only the wor
 Passed on the production server, in a test of the owner with a session that loads the plugin from the working copy (`--plugin-dir`): `/job` with no job, `/every 5m` with no steps, `/every 1m` with one prompt, the start post with the job after a new start, two runs, and `/drop`.
 
 Not tested with a real Claude Code: a prompt step that starts no turn, a step failure, `/stop` and `/start`, a run while the session is busy, an owner post during a run, a permission request in a run, and the steps `/compact`, `/context`, `/model` and `/effort`. The unit tests have these cases, but not the last two. Not tested: herdr on Linux.
+
+## Start before Mattermost, 2026-11-12
+
+Claude Code 2.1.322 in the herdr container on Linux, production server.
+
+Measured: after a boot of the host, herdr resumed Claude Code 6 seconds before Mattermost listened. `bun server.ts` started 2 seconds before Mattermost listened. The session stayed passive with no socket in the run directory, and its bot stayed offline until the agent started again.
+
+Change: `untilStarted` in `session.ts` tries `provision` again after each failure that is not an answer of Mattermost with a status below 500. This includes a connection failure, a timeout, a status of 500 or more, and each other error, for example `login gave no session`. The number of tries has no limit. The pause starts at 1 second, doubles, and is 30 seconds at most. A status below 500 ends the start, as before. In pi, a stopped session gets no new try.
+
+Tested: `bun test dev`, and `untilStarted` in Node 26.
+
+Not tested: a real Claude Code or a real pi that starts before Mattermost, on the fake server or on the production server.

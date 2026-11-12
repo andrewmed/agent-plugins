@@ -107,7 +107,7 @@ export class PiBridge extends Session {
   }
 
   async start(config: Config, reason: string): Promise<void> {
-    this.starting = this.open(config, this.ctx.cwd, 'pi', project => isLive(lockKey(project)))
+    this.starting = this.open(config, this.ctx.cwd, 'pi', project => isLive(lockKey(project)), () => this.disposed)
     await this.starting
     if (this.disposed) {
       this.ws?.stop()
