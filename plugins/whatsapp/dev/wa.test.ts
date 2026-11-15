@@ -319,6 +319,16 @@ test('history chunks: count the chunks, and stop in the event of the last starte
   assert.equal(buffered.length, 8)
 })
 
+test('history chunks: the full creds at a connect are not a chunk', () => {
+  const h = { started: 0, emitted: 0, stored: 0, stopAfterChunk: false, stopped: false }
+  const ev: any = { emit: () => {} }
+  wa.trackHistory(ev, h, () => {})
+  ev.emit('creds.update', { me: { id: '34600000000:5@s.whatsapp.net' }, processedHistoryMessages: [{}] })
+  assert.equal(h.started, 0)
+  ev.emit('creds.update', { processedHistoryMessages: [{}, {}] })
+  assert.equal(h.started, 1)
+})
+
 test('history chunks with the real Baileys event buffer: a buffered chunk is stored at the flush', async () => {
   const B: any = await import('@whiskeysockets/baileys')
   const { db } = store()
@@ -355,6 +365,18 @@ test('withSync: the Baileys event buffer is flushed before the socket closes', a
   conn.sock.end = () => calls.push('end')
   await wa.withSync(p, db, false, undefined, async () => conn)
   assert.deepEqual(calls, ['flush', 'end'])
+})
+
+test('withSync: the socket closes after the command is done', async () => {
+  const { p, db } = store()
+  const calls: string[] = []
+  const conn: any = fakeConn()
+  conn.sock.end = () => calls.push('end')
+  await wa.withSync(p, db, false, async () => {
+    await new Promise(r => setTimeout(r, 50))
+    calls.push('work')
+  }, async () => conn)
+  assert.deepEqual(calls, ['work', 'end'])
 })
 
 test('withSync: the close waits for the history chunk that downloads, and stops in its event', async () => {

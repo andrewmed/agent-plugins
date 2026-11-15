@@ -361,7 +361,8 @@ export function applyEvents(db: DatabaseSync, ev: any, state?: any) {
 export function trackHistory(ev: any, history: any, stop: () => void) {
   const emit = ev.emit.bind(ev)
   ev.emit = (event: string, data: any) => {
-    if (event === 'creds.update' && data?.processedHistoryMessages) history.started++
+    // At each connect, Baileys also sends the full creds, with the old processedHistoryMessages.
+    if (event === 'creds.update' && data && Object.keys(data).join() === 'processedHistoryMessages') history.started++
     if (event !== 'messaging-history.set') return emit(event, data)
     history.emitted++
     const r = emit(event, data)
@@ -515,7 +516,7 @@ export async function withSync(p: Paths, db: DatabaseSync, offline: boolean, wor
     }
     const problem = await waitSync(conn.state)
     recordSync(db, problem)
-    return run(problem ? `incomplete (${problem})` : 'complete', conn)
+    return await run(problem ? `incomplete (${problem})` : 'complete', conn)
   } finally {
     if (conn) await closeSock(conn)
     releaseLock(lock)
