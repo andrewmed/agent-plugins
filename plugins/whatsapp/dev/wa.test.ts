@@ -295,25 +295,25 @@ test('waitSync: the time limit gives an incomplete sync', async () => {
 
 test('history chunks: count the chunks, and stop in the event of the last started chunk', () => {
   const { db } = store()
-  const state: any = { historyStarted: 0, historyEmitted: 0, historyStored: 0, stopAfterChunk: false, stopped: false }
+  const h = { started: 0, emitted: 0, stored: 0, stopAfterChunk: false, stopped: false }
   const buffered: any[] = []
   let stops = 0
   const ev: any = { emit: (event: string, data: any) => buffered.push([event, data]) }
-  wa.trackHistory(ev, state, () => stops++)
+  wa.trackHistory(ev, h, () => stops++)
   ev.emit('creds.update', { processedHistoryMessages: [{}] })
   ev.emit('creds.update', { me: {} })
-  assert.deepEqual([state.historyStarted, state.historyEmitted], [1, 0])
+  assert.deepEqual([h.started, h.emitted], [1, 0])
   ev.emit('messaging-history.set', { messages: [msg(DM, 'H1', { conversation: 'old' })] })
   ev.emit('creds.update', { processedHistoryMessages: [{}, {}] })
-  assert.deepEqual([state.historyStarted, state.historyEmitted, state.historyStored], [2, 1, 0])
-  wa.applyEvents(db, { 'messaging-history.set': buffered[2][1] }, state)
-  assert.deepEqual([state.historyStarted, state.historyStored], [2, 1])
-  state.stopAfterChunk = true
+  assert.deepEqual([h.started, h.emitted, h.stored], [2, 1, 0])
+  wa.applyEvents(db, { 'messaging-history.set': buffered[2][1] }, { history: h })
+  assert.deepEqual([h.started, h.stored], [2, 1])
+  h.stopAfterChunk = true
   ev.emit('creds.update', { processedHistoryMessages: [{}, {}, {}] })
   ev.emit('messaging-history.set', { messages: [] })
   assert.equal(stops, 0)
   ev.emit('messaging-history.set', { messages: [] })
-  assert.deepEqual([stops, state.stopped], [1, true])
+  assert.deepEqual([stops, h.stopped], [1, true])
   ev.emit('messaging-history.set', { messages: [] })
   assert.equal(stops, 1)
   assert.equal(buffered.length, 8)
@@ -324,26 +324,26 @@ test('history chunks with the real Baileys event buffer: a buffered chunk is sto
   const { db } = store()
   const silent: any = { level: 'silent', child: () => silent, trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {} }
   const ev = B.makeEventBuffer(silent)
-  const state: any = { historyStarted: 0, historyEmitted: 0, historyStored: 0 }
-  wa.trackHistory(ev, state, () => {})
-  ev.process((events: any) => wa.applyEvents(db, events, state))
+  const h = { started: 0, emitted: 0, stored: 0 }
+  wa.trackHistory(ev, h, () => {})
+  ev.process((events: any) => wa.applyEvents(db, events, { history: h }))
   const chunk = (id: string) => ({ chats: [], contacts: [], messages: [msg(DM, id, { conversation: id })], syncType: 2 })
   ev.buffer()
   ev.emit('creds.update', { processedHistoryMessages: [{}] })
   ev.emit('messaging-history.set', chunk('H1'))
   ev.emit('creds.update', { processedHistoryMessages: [{}, {}] })
-  assert.deepEqual([state.historyStarted, state.historyEmitted, state.historyStored], [2, 1, 0])
+  assert.deepEqual([h.started, h.emitted, h.stored], [2, 1, 0])
   assert.deepEqual(texts(db), [])
   ev.flush()
-  assert.deepEqual([state.historyStored, texts(db)], [1, ['H1:text:H1']])
+  assert.deepEqual([h.stored, texts(db)], [1, ['H1:text:H1']])
   ev.emit('messaging-history.set', chunk('H2'))
-  assert.deepEqual([state.historyStored, texts(db)], [2, ['H1:text:H1', 'H2:text:H2']])
+  assert.deepEqual([h.stored, texts(db)], [2, ['H1:text:H1', 'H2:text:H2']])
 })
 
 test('waitSync: no complete sync while a history chunk is not stored', async () => {
-  const state: any = { pending: true, pendingAt: 0, lastHistory: 0, closed: null, error: null, historyStarted: 1, historyStored: 0 }
+  const state: any = { pending: true, pendingAt: 0, lastHistory: 0, closed: null, error: null, history: { started: 1, stored: 0 } }
   assert.equal(await wa.waitSync(state, 300), '0.3 s limit')
-  state.historyStored = 1
+  state.history.stored = 1
   assert.equal(await wa.waitSync(state, 300), null)
 })
 
@@ -364,8 +364,8 @@ test('withSync: the close waits for the history chunk that downloads, and stops 
   const ev: any = { emit: () => calls.push('emit'), flush: () => calls.push('flush') }
   conn.sock.ev = ev
   conn.sock.end = () => calls.push('end')
-  Object.assign(conn.state, { historyStarted: 0, historyEmitted: 0, historyStored: 0, stopAfterChunk: false, stopped: false })
-  wa.trackHistory(ev, conn.state, () => calls.push('stop'))
+  conn.state.history = { started: 0, emitted: 0, stored: 0, stopAfterChunk: false, stopped: false }
+  wa.trackHistory(ev, conn.state.history, () => calls.push('stop'))
   const t = Date.now()
   await wa.withSync(p, db, false, async () => {
     ev.emit('creds.update', { processedHistoryMessages: [{}] })

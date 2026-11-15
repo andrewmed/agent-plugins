@@ -46,3 +46,4 @@ Baileys 7.0.0-rc13 source in `node_modules/@whiskeysockets/baileys/lib`. Not mea
 - `WebSocketClient.close()` (`Socket/Client/websocket.js`) calls `socket.close()` before its first `await`, so `isOpen` is false at once. `end()` calls it before its first `await` too. The offline queue checks `isWsOpen` before each node. A receipt sent on a closed `ws` socket does not go out.
 - Nothing in `processMessage` after the `messaging-history.set` emit needs the socket. `wa.ts` closes the socket inside that emit.
 - `ON_DEMAND` chunks have no `creds.update`, so `trackHistory` does not count them. `wa.ts` does not request them now.
+- In the `Syncing` state, `upsertMessage` runs `doAppStateSync` and `processMessage` in one `Promise.all`. `end()` calls `signalRepository.close()` before its first `await`, so a close stops the app state sync. `Syncing` occurs only when `accountSyncCounter` is 0, that is, on the first connection after the link. Peer review, not measured.

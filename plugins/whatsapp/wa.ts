@@ -349,7 +349,7 @@ export function applyEvents(db: DatabaseSync, ev: any, state?: any) {
   }
   if (h && state) {
     state.lastHistory = Date.now()
-    state.historyStored = state.historyEmitted
+    if (state.history) state.history.stored = state.history.emitted
     state.onHistory?.(h)
   }
 }
@@ -358,23 +358,23 @@ export function applyEvents(db: DatabaseSync, ev: any, state?: any) {
 // the chunks into one event. Count each chunk when its download starts and when its event is made.
 // After stopAfterChunk, stop in the event of the last started chunk: the closed socket then stops
 // the offline queue of Baileys before the next node and its receipt.
-export function trackHistory(ev: any, state: any, stop: () => void) {
+export function trackHistory(ev: any, history: any, stop: () => void) {
   const emit = ev.emit.bind(ev)
   ev.emit = (event: string, data: any) => {
-    if (event === 'creds.update' && data?.processedHistoryMessages) state.historyStarted++
+    if (event === 'creds.update' && data?.processedHistoryMessages) history.started++
     if (event !== 'messaging-history.set') return emit(event, data)
-    state.historyEmitted++
+    history.emitted++
     const r = emit(event, data)
-    if (state.stopAfterChunk && !state.stopped && state.historyEmitted >= state.historyStarted) {
-      state.stopped = true
+    if (history.stopAfterChunk && !history.stopped && history.emitted >= history.started) {
+      history.stopped = true
       stop()
     }
     return r
   }
 }
 
-const historyBusy = (state: any) => state.historyStarted > state.historyStored
-const historyDownloading = (state: any) => state.historyStarted > state.historyEmitted
+const historyBusy = (state: any) => !!state.history && state.history.started > state.history.stored
+const historyDownloading = (state: any) => !!state.history && state.history.started > state.history.emitted
 
 // ---------- connection
 
@@ -409,8 +409,7 @@ export async function connect(p: Paths, db: DatabaseSync, link?: { phone: string
   if (linked && link) fail(`already linked. To link again, delete ${p.auth}, then run link`)
   const version = await Promise.race([B.fetchLatestBaileysVersion().then((r: any) => r.version), sleep(VERSION_LIMIT_MS)])
     .catch(() => undefined)
-  const state: any = { pending: false, pendingAt: 0, lastHistory: 0, closed: null, error: null,
-    historyStarted: 0, historyEmitted: 0, historyStored: 0, stopAfterChunk: false, stopped: false }
+  const state: any = { pending: false, pendingAt: 0, lastHistory: 0, closed: null, error: null, history: null }
   for (let attempt = 0; attempt < 2; attempt++) {
     const sock = B.makeWASocket({
       ...(version ? { version } : {}),
@@ -423,7 +422,8 @@ export async function connect(p: Paths, db: DatabaseSync, link?: { phone: string
       shouldIgnoreJid: skipJid,
       getMessage: async (key: any) => sentProto(B, db, key?.id),
     })
-    trackHistory(sock.ev, state, () => endSock(sock))
+    state.history = { started: 0, emitted: 0, stored: 0, stopAfterChunk: false, stopped: false }
+    trackHistory(sock.ev, state.history, () => endSock(sock))
     sock.ev.on('creds.update', auth.saveCreds)
     sock.ev.process(async (events: any) => {
       try { applyEvents(db, events, state) } catch (e: any) { state.error = e.message }
@@ -466,9 +466,9 @@ function endSock(sock: any) {
 async function closeSock(conn: any) {
   const state = conn.state
   if (state && !state.closed && historyDownloading(state)) {
-    state.stopAfterChunk = true
+    state.history.stopAfterChunk = true
     const end = Date.now() + CHUNK_WAIT_MS
-    while (!state.stopped && !state.closed && historyDownloading(state) && Date.now() < end) await sleep(100)
+    while (!state.history.stopped && !state.closed && historyDownloading(state) && Date.now() < end) await sleep(100)
   }
   endSock(conn.sock)
 }
