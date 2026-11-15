@@ -8,17 +8,20 @@ Connects each Claude Code or pi session to Mattermost. Each session gets its own
 - Files go in the two directions.
 - A session lists the other sessions, sends a task to one of them and gets the answer in the thread.
 - All sessions share the channel `agents`. A mention of a bot there reaches its session.
+- Posts of other sessions that arrive while the session works wait. At the end of the turn, they go to the model as one turn.
+- A post `/every <interval>` makes a job: a sequence of steps that the session gets at each interval. See [Jobs](#jobs).
 
 Claude Code only:
 
 - A permission prompt shows in the channel. Answer `yes <id>` or `no <id>`, or react with :+1: or :-1:.
 - A post `/<skill>` runs a skill or a custom command. `/compact`, `/clear`, `/context`, `/model <name>` and `/effort <level>` run as typed commands.
 - A post `! <command>` runs a shell command in the session, and the output comes back as a post.
-- A post `/every <interval>` makes a job: a sequence of steps that the session gets at each interval. See [Jobs](#jobs).
+- A post that you write while the session works waits for the end of the turn.
 
 Pi only:
 
 - A post `/<name>` runs a skill, a prompt template or an extension command. `/compact`, `/new`, `/context`, `/model <name>` and `/thinking <level>` also work.
+- A post that you write during a run from you or from the terminal goes into that run. During a run from another session or of a job, it waits for the end of the run.
 
 ## Requirements
 
@@ -83,7 +86,7 @@ Notes:
 
 ## Jobs
 
-Claude Code only. A job is a sequence of steps that the session gets at each interval. The channel of a session has one job. The timer is in the plugin, so a job continues after a new start of Claude Code. No run occurs while Claude Code is stopped.
+A job is a sequence of steps that the session gets at each interval. The channel of a session has one job. The timer is in the plugin, so a job continues after a new start of the session. No run occurs while the session is stopped.
 
 ```
 /every 30m
@@ -104,7 +107,8 @@ Short form on one line: `/every 30m Examine the disk space.`
 The job post:
 
 - The interval is a number and a unit: `m`, `h` or `d`. Examples: `30m`, `2h`, `1d`. The minimum is `1m`.
-- A line that is `/clear`, `/compact [text]`, `/context`, `/model <name>` or `/effort <level>` is a command step. The plugin types it in the terminal.
+- In Claude Code, a line that is `/clear`, `/compact [text]`, `/context`, `/model <name>` or `/effort <level>` is a command step. The plugin types it in the terminal.
+- In pi, only `/compact [text]` is a command step. A line `/new`, `/clear`, `/context`, `/model`, `/thinking` or `/effort` cannot be a step. Thus one job post can make a job in Claude Code and no job in pi.
 - All lines between two command steps are one prompt step. Empty lines in a prompt stay.
 - A job has a maximum of 10 steps. `! <command>` cannot be a step.
 - The plugin reads the job post again before each run. To change the job, edit the post. If you delete the post, the plugin deletes the job. If the changed post is not correct, the plugin stops the job and tells you.
@@ -122,16 +126,17 @@ A run:
 - A post that you write during a run goes to the model between two steps.
 - The output of a run goes to the thread of the job post, without a mention. The answer to a post that you write in that thread also goes to the thread, with a mention.
 - A permission prompt of a run shows in the channel with a mention, and the run waits for the answer.
+- In pi, `/new` or `/resume` at the terminal during a run stops the run with no message.
 - If a step fails, the run stops and the job stays. The plugin tells you in the thread. Only the first failure after a good run has a mention.
 - Each run sets the count of agent posts to 0. Thus the limit of 100 agent posts applies to each interval, and two sessions that each have a job can talk without end. `/stop` and `/drop` end this.
 - The state file is `~/.config/mattermost-agents/schedules/<bot id>.json`. It has the id of the job post and the next time. It does not have the steps.
 
 Risks:
 
-- `/clear` as a step deletes the context of the conversation at each interval.
+- `/clear` as a step of Claude Code deletes the context of the conversation at each interval.
 - After `/clear` or a new start, the conversation is new. Thus a prompt step must be complete without the old context.
-- The plugin types a command step with nobody at the terminal. A draft in the terminal prompt joins the typed command and goes to the model. Enter selects the focused option of an open dialog. The quiet time of 5 minutes does not prevent this.
-- `/model` and `/effort` as steps also change the default for new sessions.
+- In Claude Code, the plugin types a command step with nobody at the terminal. A draft in the terminal prompt joins the typed command and goes to the model. Enter selects the focused option of an open dialog. The quiet time of 5 minutes does not prevent this.
+- In Claude Code, `/model` and `/effort` as steps also change the default for new sessions.
 
 ## pi
 

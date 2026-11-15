@@ -360,3 +360,33 @@ Change: `react` in `session.ts` sends each reaction after `reactionDelayMs`, 200
 Tested: `bun test dev`, and `react` in Node 26.
 
 Not tested: a real Claude Code or a real pi with the delay, on the fake server or on the production server. The fake server does not have the web client.
+
+## `Mailbox` and jobs in pi, 2026-11-15
+
+Pi 1.5.1, Node 26.
+
+Read in the pi source (`dist/core/agent-session.js`, `agent-session-runtime.js`, `extensions/types.d.ts`):
+
+- `ctx.compact` aborts a running run. A manual compaction fires no `agent_start` and no `agent_settled`. `ctx.isIdle()` is false during it. `onComplete` comes after the end of the compaction.
+- `prompt()` and `sendMessage` with `triggerTurn` from a handler of `agent_settled` start after all handlers of `agent_settled` end.
+- `sendUserMessage` with no `deliverAs` during a run throws `Agent is already processing`. The extension API returns `void`, so the extension does not get the error.
+- `before_agent_start` gives `prompt` for a run from a user message.
+
+Change: `jobs.ts` has `Mailbox` and `JobSession`, the job code that `server.ts` had. `Bridge` and `PiBridge` extend `JobSession`. In pi:
+
+- Agent posts go through `Mailbox`. During a run they wait, and `agent_settled` sends them as one custom message.
+- An owner post steers a run from the owner or from the terminal. During a run from an agent or of a job, it waits for the end of the run.
+- The commands `/every`, `/job`, `/stop`, `/start` and `/drop`. Only `/compact [text]` is a command step. `/new`, `/clear`, `/context`, `/model`, `/thinking`, `/effort` and `! <command>` are refused as steps.
+- A prompt step goes as a user message with the tag `<channel ... job="run" run_id=... step=...>`. `before_agent_start` with that tag stops the timer of 30 seconds, and the next `agent_settled` ends the step.
+
+Method: the method of "Size of the pi request, 2026-11-10", with `pi -e <folder>/pi.ts -e dev/fake-provider.ts --provider fake --model echo` in tmux, `HOME` and `PI_CODING_AGENT_DIR` as empty folders, and `dev/fake-mattermost.ts` on the port 18165. The bot `peer-cc` was made with `POST /bots` of the fake server, and its posts came from `/__test/post`.
+
+Passed on the fake server:
+
+- An owner post `SLOW first`, then two posts of `peer-cc` during the run: one answer of the model with the two posts, after the answer to the owner.
+- A post `SLOW agent task` of `peer-cc`, then an owner post during that run: the owner post got `hourglass_flowing_sand`, then `eyes`, and its own run and answer with the mention after the end of the agent run.
+- `/every 1m` with a prompt step and `/compact keep it short`: the first run 5 minutes and 20 seconds after the job post. The answer of the prompt step went to the thread of the job post with no mention. The `/compact` step failed with `Nothing to compact (session too small)`, and the run stopped with a mention. The run 1 minute later failed the same way with no mention.
+- `/job` showed the steps and the last failure. `/drop` deleted the job and the state file.
+- After `/quit` and a new start, the start post showed `job each 1h, next run <time>`.
+
+Not tested with a real pi: a `/compact` step that succeeds, a prompt step that starts no run, an aborted step, `/stop` and `/start`. The unit tests in `dev/pi.test.ts` have the first three. Not tested on the production server.

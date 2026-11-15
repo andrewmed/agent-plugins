@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
 import { hostname, tmpdir } from 'os'
 import { join } from 'path'
-import { PiBridge, assistantText, channelMessage, packageSource } from '../pi.ts'
+import { PiBridge, assistantText, channelMessage, packageSource, piStepKind } from '../pi.ts'
 import { botUsername, markedSession, sessionMarker, type Post } from '../mattermost.ts'
 import { LOOP_LIMIT, readConfig, sessionName } from '../session.ts'
 
@@ -25,6 +25,7 @@ function setup(state: { idle?: boolean; signal?: AbortSignal; commands?: any[]; 
   const reactions: string[] = []
   const compacts: any[] = []
   const selected: any[] = []
+  const stored = new Map<string, any>()
   let level = 'minimal'
   const pi = {
     sendUserMessage: (text: string, options: any) => sent.push({ text, options }),
@@ -58,14 +59,15 @@ function setup(state: { idle?: boolean; signal?: AbortSignal; commands?: any[]; 
   bridge.names.set('o', 'owner')
   bridge.names.set('a', 'other-cc')
   bridge.api = {
-    api: async (_method: string, url: string, body: any) => {
+    api: async (method: string, url: string, body: any) => {
+      if (method === 'GET' && url.startsWith('/posts/')) return stored.get(url.slice('/posts/'.length))
       if (url.split('?')[0] === '/posts') posted.push(body)
       if (url === '/reactions') reactions.push(body.emoji_name)
       return { id: 'made' }
     },
   }
   const messages = () => posted.map(entry => entry.message)
-  return { bridge, sent, custom, posted, messages, reactions, compacts, selected, state }
+  return { bridge, sent, custom, posted, messages, reactions, compacts, selected, state, stored }
 }
 
 describe('config', () => {
@@ -247,14 +249,62 @@ describe('posts from agents', () => {
     expect(custom[0].message.content).toContain('It is not the words of the owner')
     expect(custom[0].message.content).toContain('@other-cc')
   })
+  test('posts that arrive during a run go as one message after the end of the run', async () => {
+    const { bridge, custom } = setup()
+    bridge.runStarted()
+    await bridge.fromAgent(post({ user_id: 'a', message: 'one' }))
+    await bridge.fromAgent(post({ user_id: 'a', message: 'two' }))
+    expect(custom).toHaveLength(0)
+    bridge.runSettled()
+    expect(custom).toHaveLength(1)
+    expect(custom[0].message.content).toContain('one')
+    expect(custom[0].message.content).toContain('two')
+    bridge.runStarted()
+    bridge.runSettled()
+    expect(custom).toHaveLength(1)
+  })
   test('the limit stops delivery until the next input from the owner', async () => {
     const { bridge, custom, reactions } = setup()
+    bridge.runStarted()
     for (let i = 0; i < LOOP_LIMIT + 2; i++) await bridge.fromAgent(post({ user_id: 'a' }))
-    expect(custom).toHaveLength(LOOP_LIMIT)
+    expect(reactions.filter(name => name === 'eyes')).toHaveLength(LOOP_LIMIT)
     expect(reactions.filter(name => name === 'no_entry_sign')).toHaveLength(2)
-    await bridge.fromOwner(post())
+    bridge.runSettled()
+    expect(custom).toHaveLength(1)
+    bridge.terminalInput('go on')
     await bridge.fromAgent(post({ user_id: 'a' }))
-    expect(custom).toHaveLength(LOOP_LIMIT + 1)
+    bridge.runSettled()
+    expect(custom).toHaveLength(2)
+  })
+  test('an owner post during a run from an agent waits for the end of the run', async () => {
+    const { bridge, sent, custom, reactions } = setup()
+    await bridge.fromAgent(post({ user_id: 'a' }))
+    bridge.runStarted()
+    bridge.messageEnded({ role: 'custom', ...custom[0].message })
+    await bridge.fromOwner(post({ id: 'p2' }))
+    expect(sent).toHaveLength(0)
+    expect(reactions).toEqual(['eyes', 'hourglass_flowing_sand'])
+    bridge.runSettled()
+    expect(sent).toHaveLength(1)
+    expect(reactions).toEqual(['eyes', 'hourglass_flowing_sand', 'eyes'])
+  })
+  test('a skill post during a run from an agent also waits', async () => {
+    const { bridge, sent, custom } = setup({ commands: [{ name: 'skill:state', source: 'skill' }] })
+    await bridge.fromAgent(post({ user_id: 'a' }))
+    bridge.runStarted()
+    bridge.messageEnded({ role: 'custom', ...custom[0].message })
+    await bridge.fromOwner(post({ id: 'p2', message: '/state' }))
+    expect(sent).toHaveLength(0)
+    bridge.runSettled()
+    expect(sent[0].text).toBe('/skill:state')
+    expect(bridge.fromMattermost).toBe(true)
+  })
+  test('an owner post during a run from the terminal steers it', async () => {
+    const { bridge, sent } = setup()
+    bridge.terminalInput('work')
+    bridge.runStarted()
+    await bridge.fromOwner(post())
+    expect(sent).toHaveLength(1)
   })
   test('send is refused after a post from an agent enters the conversation, until a user message enters', async () => {
     const { bridge, custom } = setup()
@@ -273,6 +323,164 @@ describe('posts from agents', () => {
     bridge.messageEnded({ role: 'user', content: 'hi' })
     expect(await bridge.callTool('send', { to: 'x-cc', text: 'do it' })).toBe('sent')
     expect(reached).toEqual(['x-cc', 'x-cc'])
+  })
+})
+
+describe('job', () => {
+  const text = (value: string, stopReason = 'stop') => ({ role: 'assistant', content: [{ type: 'text', text: value }], stopReason })
+
+  function jobSetup(message: string) {
+    const env = setup()
+    const { bridge, stored } = env
+    bridge.jobPath = join(mkdtempSync(join(tmpdir(), 'mm-pi-job-')), 'schedules', 'b.json')
+    bridge.quietMs = 0
+    const owner = async (id: string, value: string) => {
+      const made = post({ id, message: value, channel_id: 'c', user_id: 'o' })
+      stored.set(id, made)
+      await bridge.fromOwner(made)
+      await bridge.out
+    }
+    const due = async () => {
+      bridge.job.nextAt = Date.now() - 1
+      await bridge.jobTick()
+    }
+    const start = (prompt: string) => bridge.beforeStart({ messageType: 'user', prompt })
+    return { ...env, owner, due, start, ready: () => owner('job', message) }
+  }
+
+  test('piStepKind accepts only /compact and refuses the other commands', () => {
+    for (const line of ['/compact', '/compact keep the plan']) expect(piStepKind(line)).toBe('command')
+    for (const line of ['/new', '/clear', '/context', '/model opus', '/thinking high', '/effort low', '! ls']) expect(piStepKind(line)).toBe('refused')
+    for (const line of ['/state', 'Examine the disk.', '!ls', '/compacted']) expect(piStepKind(line)).toBe('text')
+  })
+
+  test('a refused command makes no job', async () => {
+    const { bridge, messages, ready } = jobSetup('/every 1h\n/new\nSay hi.')
+    await ready()
+    expect(bridge.job).toBeUndefined()
+    expect(messages()[0]).toContain('`/new` cannot be a step of a job')
+  })
+
+  test('a run sends the steps one after the other, and the texts go to the thread with no mention', async () => {
+    const { bridge, sent, posted, compacts, ready, due, start } = jobSetup('/every 1h\nSay hi.\n/compact keep it')
+    await ready()
+    posted.length = 0
+    await due()
+    expect(sent).toHaveLength(1)
+    expect(sent[0].text).toContain('job="run"')
+    expect(sent[0].text).toContain('thread_id="job"')
+    expect(sent[0].options).toBeUndefined()
+    start(sent[0].text)
+    bridge.runStarted()
+    bridge.messageEnded(text('hi'))
+    bridge.runSettled()
+    expect(compacts).toHaveLength(1)
+    expect(compacts[0].customInstructions).toBe('keep it')
+    compacts[0].onComplete()
+    await bridge.commandDone
+    await bridge.out
+    expect(posted.map(entry => [entry.message, entry.root_id])).toEqual([
+      ['hi', 'job'],
+      [':white_check_mark: `/compact keep it`', 'job'],
+    ])
+    expect(bridge.run).toBeUndefined()
+    expect(bridge.job.lastRun.result).toBe('ok')
+    expect(bridge.mailbox.busy).toBe(false)
+  })
+
+  test('a run waits for the quiet time and for an idle session', async () => {
+    const { bridge, sent, state, ready, due } = jobSetup('/every 1h\nSay hi.')
+    await ready()
+    bridge.quietMs = 60_000
+    await due()
+    expect(sent).toHaveLength(0)
+    bridge.quietMs = 0
+    state.idle = false
+    await due()
+    expect(sent).toHaveLength(0)
+    state.idle = true
+    await due()
+    expect(sent).toHaveLength(1)
+  })
+
+  test('a prompt that starts no run stops the run', async () => {
+    const { bridge, messages, ready, due } = jobSetup('/every 1h\nSay hi.')
+    await ready()
+    bridge.promptStartMs = 20
+    await due()
+    await Bun.sleep(50)
+    await bridge.out
+    expect(messages().at(-1)).toContain('The run of the job stopped: the prompt of step 1 started no turn in 0 seconds')
+    expect(bridge.run).toBeUndefined()
+    expect(bridge.mailbox.busy).toBe(false)
+  })
+
+  test('a failed step stops the run', async () => {
+    const { bridge, sent, messages, ready, due, start } = jobSetup('/every 1h\nSay hi.\nSay bye.')
+    await ready()
+    await due()
+    start(sent[0].text)
+    bridge.runStarted()
+    bridge.runSettled(true)
+    await bridge.out
+    expect(sent).toHaveLength(1)
+    expect(messages().at(-1)).toContain('The run of the job stopped: the turn stopped: the run was aborted')
+  })
+
+  test('a run that is not the job step does not end the step', async () => {
+    const { bridge, sent, ready, due, start } = jobSetup('/every 1h\nSay hi.')
+    await ready()
+    await due()
+    start('<channel source="mattermost" job="run" run_id="other" step="1">\nx\n</channel>')
+    expect(bridge.promptWait).toBeDefined()
+    start(sent[0].text)
+    expect(bridge.promptWait).toBeUndefined()
+  })
+
+  test('an owner post during a run waits for the end of the step', async () => {
+    const { bridge, sent, reactions, ready, due, start, stored } = jobSetup('/every 1h\nSay hi.')
+    await ready()
+    await due()
+    start(sent[0].text)
+    bridge.runStarted()
+    const made = post({ id: 'p2', message: 'status?' })
+    stored.set('p2', made)
+    await bridge.fromOwner(made)
+    expect(sent).toHaveLength(1)
+    expect(reactions).toContain('hourglass_flowing_sand')
+    bridge.runSettled()
+    expect(sent).toHaveLength(2)
+    expect(sent[1].text).toContain('status?')
+  })
+
+  test('/compact from a post is refused during a run', async () => {
+    const { bridge, compacts, messages, ready, due } = jobSetup('/every 1h\nSay hi.')
+    await ready()
+    await due()
+    await bridge.fromOwner(post({ message: '/compact' }))
+    await bridge.out
+    expect(compacts).toHaveLength(0)
+    expect(messages().at(-1)).toContain('The session is busy')
+  })
+
+  test('a stop ends the run, so a late callback posts nothing', async () => {
+    const { bridge, compacts, posted, ready, due } = jobSetup('/every 1h\n/compact')
+    await ready()
+    await due()
+    await bridge.stop(false)
+    posted.length = 0
+    compacts[0].onComplete()
+    await bridge.commandDone
+    await bridge.out
+    expect(bridge.run).toBeUndefined()
+    expect(posted.filter(entry => entry.message.includes('The run of the job stopped'))).toHaveLength(0)
+  })
+
+  test('/job reports the job', async () => {
+    const { messages, owner, ready } = jobSetup('/every 1h\nSay hi.')
+    await ready()
+    await owner('q', '/job')
+    expect(messages().at(-1)).toContain(':alarm_clock: Job: each 1h, 1 step')
   })
 })
 

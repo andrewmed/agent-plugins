@@ -5,6 +5,7 @@ A Claude Code plugin marketplace and a pi package. Each plugin is a folder in `p
 - `README.md`: the install and the automatic update.
 - `plugins/mattermost/README.md`: the functions, the configuration and the security rules of the plugin.
 - `plugins/mattermost/dev/NOTES.md`: the measured behavior of Claude Code, pi and Mattermost, and the test methods. Each section has a date. An old section can disagree with the code. Write new measured behavior in a new section with the date.
+- `BACKLOG.md`: the changes for a later time, for all plugins.
 
 ## Release
 
@@ -13,7 +14,7 @@ A Claude Code plugin marketplace and a pi package. Each plugin is a folder in `p
 
 ## Bun and Node
 
-- `plugins/mattermost/mattermost.ts` and `plugins/mattermost/session.ts` run in Bun (`server.ts`, Claude Code) and in Node (`pi.ts`, pi). Use only functions that Bun and Node both have. The `WebSocket` of Node has no `terminate()` and no `ping` event.
+- `plugins/mattermost/mattermost.ts`, `plugins/mattermost/session.ts`, `plugins/mattermost/jobs.ts` and `plugins/mattermost/schedule.ts` run in Bun (`server.ts`, Claude Code) and in Node (`pi.ts`, pi). Use only functions that Bun and Node both have. The `WebSocket` of Node has no `terminate()` and no `ping` event.
 - `node` cannot load these files directly, because they use parameter properties. To run them in Node: `bun build <file> --target=node --outfile=<name>.mjs`, then `node <name>.mjs`.
 
 ## Tests

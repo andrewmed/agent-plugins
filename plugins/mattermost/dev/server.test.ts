@@ -1499,6 +1499,16 @@ describe('job', () => {
     expect(bridge.job.nextAt).toBeGreaterThanOrEqual(before - 1 + 7_200_000)
   })
 
+  test('/start keeps the job stopped when the state file is not written', async () => {
+    const { bridge, posted, owner } = jobBridge()
+    await owner('j1', '/every 1m do it')
+    await owner('p', '/stop')
+    bridge.jobPath = '/dev/null/schedules/b.json'
+    await owner('u', '/start')
+    expect(bridge.job.paused).toBe(true)
+    expect(posted.at(-1)!.message).toBe('@o :warning: The job stays stopped: the state file was not written.')
+  })
+
   test('a changed job post that is not correct stops the job, and /start reads it again', async () => {
     const { bridge, sent, posts, posted, statePath, owner, due } = jobBridge()
     await owner('j1', '/every 1m do it')
@@ -1728,7 +1738,7 @@ describe('job', () => {
       if (method !== 'GET') calls.push(`${method} ${url} ${body.message}`)
       return method === 'GET' ? api(method, url, body) : { id: 'start' }
     }
-    bridge.start = { text: 'Session started' }
+    bridge.startPost = { text: 'Session started' }
     bridge.showStart()
     await bridge.showJobAtStart(first.bridge.job)
     await bridge.out
