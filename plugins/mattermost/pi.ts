@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import type { Config, Post } from './mattermost.ts'
 import { JOB_COMMAND_RE, JOB_TICK_MS, JobSession, tagValue, type CommandResult, type Run } from './jobs.ts'
 import type { StepKind } from './schedule.ts'
-import { RUN_DIR, STATE_DIR, TOOLS, agentNotice, agentRules, attachmentList, attachments, errorText, isLive, quote, readConfig, safeName, takeLock, type Lock } from './session.ts'
+import { RUN_DIR, STATE_DIR, TOOLS, agentNotice, agentRules, attachmentList, attachments, errorText, isLive, quote, readConfig, safeName, takeLock, type Follow, type Lock } from './session.ts'
 
 const TOOL_PREFIX = 'mattermost_'
 const NEW_SESSION_COMMAND = 'mattermost-new'
@@ -119,6 +119,8 @@ export class PiBridge extends JobSession {
   private jobTurn = false
   private stepRun: Run | undefined
   private agentTask = false
+  // A followed post of the run asked for a report: the last text gets the mention.
+  private report = false
   private texts: string[] = []
   private failure: string | undefined
   private disposed = false
@@ -159,6 +161,7 @@ export class PiBridge extends JobSession {
     this.startPost = { text: `:large_green_circle: ${START_NOTICES[reason] ?? 'Session started'} on \`${hostname()}\` in \`${this.ctx.cwd}\`${model}` }
     this.showStart()
     this.loadJob()
+    this.loadFollow()
   }
 
   async stop(quit: boolean): Promise<void> {
@@ -201,7 +204,10 @@ export class PiBridge extends JobSession {
 
   messageEnded(message: AgentMessage): void {
     if (message.role === 'user') this.agentTask = false
-    else if (message.role === 'custom' && message.customType === 'mattermost') this.agentTask = true
+    else if (message.role === 'custom' && message.customType === 'mattermost') {
+      this.agentTask = true
+      this.report ||= this.mailbox.report
+    }
     if (message.role !== 'assistant') return
     this.texts.push(...assistantText(message))
     const failed = message.stopReason === 'error' || message.stopReason === 'aborted'
@@ -237,7 +243,7 @@ export class PiBridge extends JobSession {
     const posts = [...this.texts, ...(this.failure ? [`:warning: The turn stopped: ${this.failure}`] : [])]
     const target = this.replyChannel ?? id?.channelId
     const root = this.replyRoot
-    const mention = this.fromMattermost && !this.jobTurn && id ? `@${id.ownerUsername} ` : ''
+    const mention = ((this.fromMattermost && !this.jobTurn) || this.report) && id ? `@${id.ownerUsername} ` : ''
     const run = this.stepRun
     const cause = this.failure ?? (aborted ? 'the run was aborted' : undefined)
     this.texts = []
@@ -247,6 +253,7 @@ export class PiBridge extends JobSession {
     this.replyRoot = undefined
     this.jobTurn = false
     this.stepRun = undefined
+    this.report = false
     if (id && target) {
       this.enqueue(async () => {
         for (const [i, text] of posts.entries()) await this.post(target, (i === posts.length - 1 ? mention : '') + text, root)
@@ -285,7 +292,7 @@ export class PiBridge extends JobSession {
   private beginReply(post: Post): void {
     this.fromMattermost = true
     this.replyChannel = post.channel_id
-    this.replyRoot = post.root_id && post.root_id === this.job?.postId ? post.root_id : undefined
+    this.replyRoot = post.channel_id === this.id!.agentsChannelId ? post.root_id || post.id : post.root_id && post.root_id === this.job?.postId ? post.root_id : undefined
   }
 
   private refuseBusy(post: Post, command: string): void {
@@ -329,10 +336,10 @@ export class PiBridge extends JobSession {
     return this.agentTask
   }
 
-  protected async fromAgent(post: Post): Promise<void> {
+  protected async fromAgent(post: Post, follow?: Follow): Promise<void> {
     const sender = safeName(await this.userName(post.user_id))
     this.track(post)
-    this.react(post.id, this.mailbox.offer(agentNotice(sender, post, attachments(post))) ? 'eyes' : 'no_entry_sign')
+    this.react(post.id, this.mailbox.offer(agentNotice(sender, post, attachments(post), follow?.purpose), follow) ? 'eyes' : 'no_entry_sign')
   }
 
   protected stepKind(line: string): StepKind {

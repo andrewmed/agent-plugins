@@ -326,6 +326,40 @@ describe('posts from agents', () => {
   })
 })
 
+describe('channel agents and follow', () => {
+  const text = (value: string) => ({ role: 'assistant', content: [{ type: 'text', text: value }], stopReason: 'stop' })
+
+  test('the texts of a run from an owner post in agents go to the thread of the post, with the mention', async () => {
+    const { bridge, sent, posted } = setup()
+    bridge.id.agentsChannelId = 'ag'
+    await bridge.fromOwner(post({ id: 'op', channel_id: 'ag', message: '@ai-pi check' }))
+    expect(sent).toHaveLength(1)
+    bridge.runStarted()
+    bridge.messageEnded(text('done'))
+    bridge.runSettled()
+    await bridge.out
+    expect(posted).toEqual([{ channel_id: 'ag', message: '@owner done', root_id: 'op', file_ids: [] }])
+  })
+
+  test('a followed post has the purpose, and the last text of its run mentions the owner only when the follow asks for a report', async () => {
+    for (const report of [true, false]) {
+      const { bridge, custom, messages } = setup()
+      await bridge.fromAgent(post({ user_id: 'a', message: 'new mail' }), { from: ['other-cc'], purpose: 'tell me about mail', report })
+      expect(custom[0].message.content).toContain('The purpose that the owner gave: tell me about mail')
+      bridge.runStarted()
+      bridge.messageEnded({ role: 'custom', ...custom[0].message })
+      bridge.messageEnded(text('bank mail'))
+      bridge.runSettled()
+      bridge.terminalInput('next')
+      bridge.runStarted()
+      bridge.messageEnded(text('terminal answer'))
+      bridge.runSettled()
+      await bridge.out
+      expect(messages()).toEqual([report ? '@owner bank mail' : 'bank mail', '> next', 'terminal answer'])
+    }
+  })
+})
+
 describe('job', () => {
   const text = (value: string, stopReason = 'stop') => ({ role: 'assistant', content: [{ type: 'text', text: value }], stopReason })
 

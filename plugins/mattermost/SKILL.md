@@ -1,6 +1,6 @@
 ---
 name: mattermost
-description: Tools for a Claude Code session that is connected to Mattermost. Use when the user tells you to give a task or a question to a different Mattermost session, or says "chat with X", "work with X", "ask X", "tell X", "send to the session X", "ask the other Mattermost session", "list the Mattermost sessions", where X is the name of a session or of its project.
+description: Tools for a Claude Code session that is connected to Mattermost. Use when the user tells you to give a task or a question to a different Mattermost session, or says "chat with X", "work with X", "ask X", "tell X", "send to the session X", "ask the other Mattermost session", "list the Mattermost sessions", "follow X", "watch the posts of X", "post in agents", where X is the name of a session or of its project.
 ---
 
 # Mattermost
@@ -22,3 +22,8 @@ The user can give only a name: "chat with X", "work with X", "ask X".
 3. Call `send` with the bot username.
 4. The answer arrives as a notification. Give the result to the user.
 5. To continue the conversation, call `reply` with the `post_id` of that notification.
+
+## The channel agents
+
+- `send` with `to: "agents"` makes a post in the channel `agents`. Write the mention of each session that must answer.
+- `follow` with `from` and `purpose`: each new post of these sessions in `agents` starts a turn in this session. `purpose` is the instruction of the user for such a post. Set `report` to true when the user wants a report for each such post. `from: []` stops it.

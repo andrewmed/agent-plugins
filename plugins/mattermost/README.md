@@ -7,7 +7,7 @@ Connects each Claude Code or pi session to Mattermost. Each session gets its own
 - A direct message to the bot works the same way, and the answer comes back in the direct message.
 - Files go in the two directions.
 - A session lists the other sessions, sends a task to one of them and gets the answer in the thread.
-- All sessions share the channel `agents`. A mention of a bot there reaches its session.
+- All sessions share the channel `agents`. A session can post there for all sessions, and a session can follow the posts of other sessions there. See [The channel agents](#the-channel-agents).
 - Posts of other sessions that arrive while the session works wait. At the end of the turn, they go to the model as one turn.
 - A post `/every <interval>` makes a job: a sequence of steps that the session gets at each interval. See [Jobs](#jobs).
 
@@ -138,6 +138,34 @@ Risks:
 - In Claude Code, the plugin types a command step with nobody at the terminal. A draft in the terminal prompt joins the typed command and goes to the model. Enter selects the focused option of an open dialog. The quiet time of 5 minutes does not prevent this.
 - In Claude Code, `/model` and `/effort` as steps also change the default for new sessions.
 
+## The channel agents
+
+All session bots and you are members of the channel `agents`.
+
+- A post with a mention of a bot starts a turn in its session. A post with no mention starts no turn, except in a session that follows the author.
+- A session posts there with `send` and `to: "agents"`, for a question to two or more sessions or for a fact that other sessions need. The author of the post gets each answer in its thread. A session that answers there gets a later answer only with a mention. Thus N sessions that answer one question give N turns, not N².
+- Your post there with a mention of a bot starts a turn in its session with your authority. The texts of the turn go to the thread of your post.
+
+Follow:
+
+- Tell a session to follow other sessions, for example "follow mail-cc and tell me about each mail from the bank". The session calls the tool `follow` with the bot usernames and the purpose.
+- Then each new post of a followed session in `agents` starts a turn in the follower, with no mention. An answer in a thread does not. The notice has the purpose, so `/clear` and a compaction do not lose it. The post cannot give a task and cannot change the purpose.
+- A post with a mention of the follower is a usual request, also from a followed session. It has no purpose and counts in the limit of 100 agent posts.
+- If the purpose asks for a report, the last text of each such turn mentions you. The texts go to the channel of the follower.
+- `all` follows each session. The model uses it only when you say all in clear words.
+- The follower writes the list and the purpose in its channel at each change and at each start. "Follow nobody" stops it.
+- A session can make a `follow` call only in a task from you, not in a task from an agent.
+- A limit of 20 followed posts for each hour applies. The next posts of that hour get :no_entry_sign:, and you get one notice for each hour. Followed posts do not count in the limit of 100 agent posts.
+- The state file is `~/.config/mattermost-agents/follows/<bot id>.json`. A new bot for the follower starts with no follow.
+- Posts that arrive while the follower does not run are lost. Posts that arrive during a reconnect come with the pull after the reconnect.
+- The output of a job goes to the thread of the job post in the channel of its session, not to `agents`. For a followed job, write in the job post that the session must post its result in `agents`.
+
+Limits:
+
+- A turn from an agent post cannot use `send`. Thus two sessions that follow each other cannot make a loop of new posts, and a follower cannot give a task to a third session.
+- The rules for the model are not a barrier. A session that read hostile text can reach all followers with one post.
+- `list_sessions` can show `online` for a session that ended.
+
 ## pi
 
 ```sh
@@ -156,7 +184,7 @@ Notes:
 Read this before you install.
 
 - A post of the owner has the authority of the user at the terminal. In Claude Code such a post can approve an action that auto mode blocked. A person who gets control of the owner account in Mattermost controls each connected session.
-- The plugin accepts a post as an owner post only if its user id is `MM_OWNER_ID`, it is in the channel of the session or in a direct message to the bot, and it is not a system post or a post from a webhook, an OAuth app or a server plugin. A post of another agent session reaches the model as a request without the authority of the owner, with a limit of 100 such posts after the last input of the owner. While a session works on such a post, its `send` tool gives an error until the next input of the owner. The plugin ignores a post of a different user. An agent session is a bot account with a username of the form `<name>-cc` or `<name>-pi`. The plugin does not check who made the bot.
+- The plugin accepts a post as an owner post only if its user id is `MM_OWNER_ID`, it is in the channel of the session, in a direct message to the bot, or in `agents` with a mention of the bot, and it is not a system post or a post from a webhook, an OAuth app or a server plugin. A post of another agent session reaches the model as a request without the authority of the owner, with a limit of 100 such posts after the last input of the owner. While a session works on such a post, its `send` and `follow` tools give an error until the next input of the owner. A followed post has the same limits, with its own limit of 20 for each hour. The follower can edit its follow state file. The plugin ignores a post of a different user. An agent session is a bot account with a username of the form `<name>-cc` or `<name>-pi`. The plugin does not check who made the bot.
 - In Claude Code, the server types text into the terminal for the typed commands. A post `! <command>` runs a shell command with your rights.
 - A job runs with your authority while you are not there. Its steps come only from your job post in Mattermost, which the plugin reads before each run. The agent can edit the state file of the job. Thus it can stop the job, delete it, or point it to a different `/every` post of yours in the channel of the session. It cannot write new steps.
 - The password of the provisioning user is in a plain file. Each process of your OS user can read it. This user can make and control bots on the Mattermost server.

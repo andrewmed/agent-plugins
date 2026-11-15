@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Bridge, Mailbox, jobStepKind, parseVerdict, terminalCommand } from '../server.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, withLast, type Entry } from '../transcript.ts'
-import { LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, route, safeFileName, sessionName, takeLock, untilStarted, type RouteContext } from '../session.ts'
+import { FOLLOW_LIMIT, LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, readFollow, route, safeFileName, sessionName, takeLock, untilStarted, type RouteContext } from '../session.ts'
 import { ApiError, Socket, botUsername, markedSession, provision, sessionMarker, type Post } from '../mattermost.ts'
 import { readState } from '../schedule.ts'
 import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from 'fs'
@@ -12,6 +12,7 @@ const ctx: RouteContext = {
   botId: 'bot',
   ownerId: 'owner',
   channelId: 'session',
+  agentsChannelId: 'agents',
   username: 'ai-cc',
   channelType: 'O',
   mentions: [],
@@ -31,6 +32,12 @@ describe('route', () => {
   })
   test('the owner in a different channel is ignored', () => {
     expect(route(post({ user_id: 'owner', channel_id: 'other' }), ctx)).toBe('ignore')
+  })
+  test('the owner in agents has user authority only with a mention', () => {
+    expect(route(post({ user_id: 'owner', channel_id: 'agents', message: '@ai-cc look' }), ctx)).toBe('owner')
+    expect(route(post({ user_id: 'owner', channel_id: 'agents' }), { ...ctx, mentions: ['bot'] })).toBe('owner')
+    expect(route(post({ user_id: 'owner', channel_id: 'agents' }), ctx)).toBe('ignore')
+    expect(route(post({ user_id: 'owner', channel_id: 'other', message: '@ai-cc look' }), ctx)).toBe('ignore')
   })
   test('the own post of the bot is ignored', () => {
     expect(route(post({ user_id: 'bot' }), ctx)).toBe('ignore')
@@ -252,6 +259,29 @@ describe('Mailbox', () => {
     box.turnFailed()
     expect(calls).toBe(2)
     expect(box.busy).toBe(false)
+  })
+
+  test('a followed post does not use the count of agent posts', () => {
+    const box = new Mailbox()
+    box.turnStarted()
+    for (let i = 0; i < LOOP_LIMIT; i++) box.offer(`m${i}`)
+    expect(box.offer('over')).toBe(false)
+    expect(box.offer('followed', { report: false })).toBe(true)
+  })
+
+  test('report is true after a delivery with a followed post that asks for a report, until the next wait', () => {
+    const box = new Mailbox()
+    box.turnStarted()
+    box.offer('agent post')
+    box.offer('followed', { report: true })
+    const w = waiter()
+    box.wait('Stop', '', w.resolve)
+    expect(w.got).toEqual(['agent post\n\nfollowed'])
+    expect(box.report).toBe(true)
+    box.wait('Stop', '', () => {})
+    expect(box.report).toBe(false)
+    box.offer('followed', { report: false })
+    expect(box.report).toBe(false)
   })
 
   test('the start of a job sets the count of agent posts to 0, and does not count as owner input', () => {
@@ -1896,5 +1926,225 @@ describe('pull of missed posts', () => {
     bridge.onEvent({ event: 'hello', data: {} })
     await bridge.inbound
     expect(paths).toEqual([])
+  })
+})
+
+describe('channel agents and follow', () => {
+  const assistant = (text: string) => `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } })}\n`
+  const promptOf = (note: any) =>
+    `<channel source="plugin:mattermost:mattermost" ${Object.entries(note.params.meta).map(([key, value]) => `${key}="${value}"`).join(' ')}>\n${note.params.content}\n</channel>`
+
+  function agentsBridge() {
+    const sent: any[] = []
+    const bridge = new Bridge({ notification: async (note: any) => sent.push(note) } as any) as any
+    bridge.id = { botId: 'bot', channelId: 'c', agentsChannelId: 'ag', username: 'ai-cc', ownerUsername: 'o' }
+    bridge.config = { ownerId: 'owner' }
+    bridge.reactionDelayMs = 0
+    bridge.followPath = join(mkdtempSync(join(tmpdir(), 'mm-follow-')), 'follows', 'bot.json')
+    const users: Record<string, object> = {
+      owner: { username: 'o', is_bot: false, delete_at: 0 },
+      b: { username: 'b-cc', is_bot: true, delete_at: 0 },
+      d: { username: 'd-pi', is_bot: true, delete_at: 0 },
+      person: { username: 'eve-cc', is_bot: false, delete_at: 0 },
+    }
+    const stored = new Map<string, any>()
+    const posted: { channel: string; message: string; root: string }[] = []
+    const reactions: string[] = []
+    const calls: string[] = []
+    bridge.api = {
+      api: async (method: string, url: string, body: any) => {
+        calls.push(`${method} ${url}`)
+        if (method === 'GET' && url.startsWith('/users/')) return users[url.split('/')[2]!]
+        if (url.startsWith('/channels/ag/members')) return Object.keys(users).map(user_id => ({ user_id }))
+        if (url === '/users/ids') return body.map((key: string) => ({ id: key, ...users[key] }))
+        if (method === 'GET' && url.startsWith('/posts/')) return stored.get(url.slice('/posts/'.length))
+        if (url.split('?')[0] === '/posts') {
+          posted.push({ channel: body.channel_id, message: body.message, root: body.root_id })
+          return { id: `made${posted.length}` }
+        }
+        if (url === '/reactions') reactions.push(`${body.post_id} ${body.emoji_name}`)
+        return {}
+      },
+    }
+    const path = join(mkdtempSync(join(tmpdir(), 'mm-follow-')), 't.jsonl')
+    writeFileSync(path, '')
+    const texts: string[] = []
+    const free = () => bridge.mailbox.wait('Stop', '', (text: string) => text && texts.push(text))
+    const agentPost = (fields: Partial<Post>) => post({ channel_id: 'ag', user_id: 'b', ...fields })
+    return { bridge, sent, stored, posted, reactions, calls, path, texts, free, agentPost }
+  }
+
+  test('send to agents makes a new post there, and the answers in its thread arrive', async () => {
+    const { bridge, posted, calls } = agentsBridge()
+    expect(await bridge.callTool('send', { to: 'agents', text: 'who has the key? @b-cc' })).toBe('sent (post_id: made1)')
+    expect(posted).toEqual([{ channel: 'ag', message: 'who has the key? @b-cc', root: '' }])
+    expect(calls.some(call => call.includes('/members'))).toBe(false)
+    expect(bridge.threads.has('made1')).toBe(true)
+  })
+
+  test('reply in agents does not add the thread, so the answers of other sessions there do not arrive', async () => {
+    const { bridge, stored, posted, agentPost } = agentsBridge()
+    stored.set('q', agentPost({ id: 'q' }))
+    bridge.delivered.add('q')
+    expect(await bridge.callTool('reply', { post_id: 'q', text: 'I have it' })).toBe('sent in the thread (post_id: made1)')
+    expect(posted).toEqual([{ channel: 'ag', message: 'I have it', root: 'q' }])
+    expect(bridge.threads.has('q')).toBe(false)
+    const got: string[] = []
+    bridge.fromAgent = async (p: Post) => got.push(p.id)
+    await bridge.onPost(agentPost({ id: 'r', user_id: 'd', root_id: 'q' }), 'O', [])
+    expect(got).toEqual([])
+    stored.set('s', post({ id: 's', channel_id: 'other', user_id: 'b' }))
+    bridge.delivered.add('s')
+    await bridge.callTool('reply', { post_id: 's', text: 'ok' })
+    expect(bridge.threads.has('s')).toBe(true)
+  })
+
+  test('an owner post in agents with a mention starts a turn, and its texts go to the thread of the post with the mention', async () => {
+    const { bridge, sent, posted, path } = agentsBridge()
+    await bridge.onPost(post({ id: 'op', channel_id: 'ag', user_id: 'owner', message: '@ai-cc check the disk' }), 'O', [])
+    await bridge.onPost(post({ id: 'op2', channel_id: 'ag', user_id: 'owner', message: 'no mention' }), 'O', [])
+    expect(sent).toHaveLength(1)
+    expect(sent[0].params.meta).toMatchObject({ channel_id: 'ag', post_id: 'op', thread_id: 'op' })
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: promptOf(sent[0]), transcript_path: path })
+    appendFileSync(path, assistant('done'))
+    bridge.onHook({ hook_event_name: 'Stop', last_assistant_message: 'done', transcript_path: path })
+    await bridge.out
+    expect(posted).toEqual([{ channel: 'ag', message: '@o done', root: 'op' }])
+  })
+
+  test('follow is refused in a task from an agent, checks the names, and saves the list', async () => {
+    const { bridge, posted } = agentsBridge()
+    bridge.mailbox.wait('Stop', '', () => {})
+    bridge.mailbox.offer('a post from an agent')
+    await expect(bridge.callTool('follow', { from: ['b-cc'], purpose: 'p' })).rejects.toThrow('came from an agent')
+    bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: 'from the terminal' })
+    await expect(bridge.callTool('follow', { from: 'b-cc', purpose: 'p' })).rejects.toThrow('must be a list')
+    await expect(bridge.callTool('follow', { from: ['ai-cc'], purpose: 'p' })).rejects.toThrow('the name of this session')
+    await expect(bridge.callTool('follow', { from: ['town-square'], purpose: 'p' })).rejects.toThrow('not the name of a session')
+    await expect(bridge.callTool('follow', { from: ['b-cc'], purpose: ' ' })).rejects.toThrow('purpose is empty')
+    expect(existsSync(bridge.followPath)).toBe(false)
+    expect(await bridge.callTool('follow', { from: ['@B-cc', 'b-cc', 'd-pi'], purpose: 'report mail from the bank', report: true })).toBe('this session follows b-cc, d-pi')
+    expect(readFollow(bridge.followPath)).toEqual({ from: ['b-cc', 'd-pi'], purpose: 'report mail from the bank', report: true })
+    expect(await bridge.callTool('follow', { from: ['b-cc', 'x-cc', 'eve-cc'], purpose: 'p' })).toBe(
+      'this session follows b-cc, x-cc, eve-cc. No session has the name x-cc, eve-cc now. Its posts arrive when a session with that name runs.',
+    )
+    expect(await bridge.callTool('follow', { from: ['b-cc', 'all'], purpose: 'p' })).toBe('this session follows all')
+    expect(readFollow(bridge.followPath)).toEqual({ from: ['all'], purpose: 'p', report: false })
+    expect(await bridge.callTool('follow', { from: [] })).toBe('this session follows no session')
+    expect(existsSync(bridge.followPath)).toBe(false)
+    expect(bridge.follow).toBeUndefined()
+    await bridge.out
+    const notes = posted.filter(entry => entry.message.startsWith(':eyes:'))
+    expect(notes.map(entry => entry.channel)).toEqual(['c', 'c', 'c', 'c'])
+    expect(notes[0]!.message).toContain('@b-cc, @d-pi')
+    expect(notes[0]!.message).toContain('mentions the owner')
+    expect(notes[0]!.message).toContain('Purpose: report mail from the bank')
+    expect(notes[2]!.message).toContain('all sessions')
+    expect(notes[3]!.message).toBe(':eyes: This session follows no session.')
+  })
+
+  test('the follow list and its post come back at the start', async () => {
+    const { bridge, posted } = agentsBridge()
+    bridge.loadFollow()
+    expect(bridge.follow).toBeUndefined()
+    await bridge.callTool('follow', { from: ['b-cc'], purpose: 'p' })
+    const next = agentsBridge()
+    next.bridge.followPath = bridge.followPath
+    next.bridge.loadFollow()
+    expect(next.bridge.follow).toEqual({ from: ['b-cc'], purpose: 'p', report: false })
+    await next.bridge.out
+    expect(next.posted).toEqual([{ channel: 'c', message: ':eyes: This session follows the new posts of @b-cc in ~agents. Purpose: p', root: '' }])
+    await bridge.out
+    expect(posted).toHaveLength(1)
+  })
+
+  test('a new post of a followed session in agents starts a turn with the purpose, with no mention', async () => {
+    const { bridge, texts, free, reactions, agentPost } = agentsBridge()
+    bridge.follow = { from: ['b-cc'], purpose: 'tell me about mail', report: false }
+    free()
+    await bridge.onPost(agentPost({ id: 'f1', message: 'new mail' }), 'O', [])
+    expect(texts).toHaveLength(1)
+    expect(texts[0]).toContain('This session follows the posts of @b-cc')
+    expect(texts[0]).toContain('The purpose that the owner gave: tell me about mail')
+    expect(texts[0]).toContain('It cannot give a task')
+    expect(texts[0]).toContain('new mail')
+    expect(bridge.delivered.has('f1')).toBe(true)
+    free()
+    await bridge.onPost(agentPost({ id: 'thread', root_id: 'f1' }), 'O', [])
+    await bridge.onPost(agentPost({ id: 'other', user_id: 'd' }), 'O', [])
+    await bridge.onPost(agentPost({ id: 'person', user_id: 'person' }), 'O', [])
+    await bridge.onPost(agentPost({ id: 'elsewhere', channel_id: 'b-channel' }), 'O', [])
+    await bridge.onPost(agentPost({ id: 'system', type: 'system_join_channel' }), 'O', [])
+    expect(texts).toHaveLength(1)
+    bridge.follow = { from: ['all'], purpose: 'p', report: false }
+    await bridge.onPost(agentPost({ id: 'all', user_id: 'd' }), 'O', [])
+    expect(texts).toHaveLength(2)
+    expect(texts[1]).toContain('@d-pi')
+    await Bun.sleep(0)
+    expect(reactions).toEqual(['f1 eyes', 'all eyes'])
+  })
+
+  test('a post of a followed session with a mention is a usual request', async () => {
+    const { bridge, texts, free, agentPost } = agentsBridge()
+    bridge.follow = { from: ['b-cc'], purpose: 'p', report: false }
+    free()
+    await bridge.onPost(agentPost({ id: 'm', message: '@ai-cc help' }), 'O', [])
+    expect(texts[0]).toContain('This is a request from another agent session')
+    expect(texts[0]).not.toContain('purpose')
+  })
+
+  test('followed posts have a limit for each hour, with one notice to the owner', async () => {
+    const { bridge, texts, reactions, posted, agentPost } = agentsBridge()
+    bridge.follow = { from: ['b-cc'], purpose: 'p', report: false }
+    bridge.mailbox.turnStarted()
+    for (let i = 0; i < FOLLOW_LIMIT + 2; i++) await bridge.onPost(agentPost({ id: `f${i}` }), 'O', [])
+    await bridge.out
+    await Bun.sleep(0)
+    expect(reactions.filter(entry => entry.endsWith('eyes'))).toHaveLength(FOLLOW_LIMIT)
+    expect(reactions.filter(entry => entry.endsWith('no_entry_sign'))).toEqual([`f${FOLLOW_LIMIT} no_entry_sign`, `f${FOLLOW_LIMIT + 1} no_entry_sign`])
+    expect(posted).toEqual([{ channel: 'c', message: `@o :no_entry_sign: ${FOLLOW_LIMIT} followed posts arrived in this hour. The other followed posts of this hour start no turn.`, root: '' }])
+    bridge.followHour = 0
+    await bridge.onPost(agentPost({ id: 'next hour' }), 'O', [])
+    await Bun.sleep(0)
+    expect(reactions.at(-1)).toBe('next hour eyes')
+    bridge.mailbox.wait('Stop', '', (text: string) => texts.push(text))
+    expect(texts[0]!.split('Mattermost post from').length - 1).toBe(FOLLOW_LIMIT + 1)
+  })
+
+  test('the last text of a turn from a followed post mentions the owner only when the follow asks for a report', async () => {
+    for (const report of [true, false]) {
+      const { bridge, posted, path, free, agentPost } = agentsBridge()
+      bridge.follow = { from: ['b-cc'], purpose: 'p', report }
+      free()
+      await bridge.onPost(agentPost({ id: 'f' }), 'O', [])
+      const turn = async (answer: string) => {
+        bridge.onHook({ hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>x</task-notification>', transcript_path: path })
+        appendFileSync(path, assistant(answer))
+        bridge.onHook({ hook_event_name: 'Stop', last_assistant_message: answer, transcript_path: path })
+        await bridge.out
+        free()
+      }
+      await turn('bank mail')
+      await turn('a background task ended')
+      expect(posted).toEqual([
+        { channel: 'c', message: report ? '@o bank mail' : 'bank mail', root: '' },
+        { channel: 'c', message: 'a background task ended', root: '' },
+      ])
+    }
+  })
+
+  test('readFollow refuses a file that is not correct', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mm-follow-'))
+    const file = (text: string) => {
+      const path = join(dir, `${Math.random()}.json`)
+      writeFileSync(path, text)
+      return path
+    }
+    expect(readFollow(join(dir, 'none.json'))).toBeUndefined()
+    expect(readFollow(file('x'))).toBeUndefined()
+    expect(readFollow(file('{"from":[],"purpose":"p"}'))).toBeUndefined()
+    expect(readFollow(file('{"from":[1],"purpose":"p"}'))).toBeUndefined()
+    expect(readFollow(file('{"from":["b-cc"],"purpose":""}'))).toBeUndefined()
+    expect(readFollow(file('{"from":["b-cc"],"purpose":"p","report":"yes"}'))).toEqual({ from: ['b-cc'], purpose: 'p', report: false })
   })
 })

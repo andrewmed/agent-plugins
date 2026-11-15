@@ -74,7 +74,7 @@ export function readState(path: string): JobState | undefined {
   }
 }
 
-export function writeState(path: string, state: JobState | undefined): void {
+export function writeState(path: string, state: object | undefined): void {
   if (!state) {
     rmSync(path, { force: true })
     return

@@ -32,11 +32,13 @@ function stepText(step: Step): string {
 export class Mailbox {
   busy = false
   private waiter: ((text: string) => void) | undefined
-  private queue: string[] = []
+  private queue: { text: string; report: boolean }[] = []
   private ownerPosts: (() => void)[] = []
   private fromAgents = 0
   private job: (() => boolean) | undefined
   agentTask = false
+  // The posts of the last delivery to the model include a followed post that asks for a report to the owner.
+  report = false
   // The start of the session counts as owner input, so the first run of a job after a start waits for the quiet time.
   ownerInputAt = Date.now()
 
@@ -72,6 +74,7 @@ export class Mailbox {
   wait(event: string, source: string, resolve: (text: string) => void): void {
     this.waiter?.('')
     this.waiter = resolve
+    this.report = false
     if (!(event === 'SessionStart' && source === 'compact')) this.busy = false
     this.flush()
   }
@@ -80,10 +83,13 @@ export class Mailbox {
     if (this.waiter === resolve) this.waiter = undefined
   }
 
-  offer(text: string): boolean {
-    if (this.fromAgents >= LOOP_LIMIT) return false
-    this.fromAgents++
-    this.queue.push(text)
+  // A followed post has its own limit for each hour, in Session.
+  offer(text: string, follow?: { report: boolean }): boolean {
+    if (!follow) {
+      if (this.fromAgents >= LOOP_LIMIT) return false
+      this.fromAgents++
+    }
+    this.queue.push({ text, report: follow?.report === true })
     this.flush()
     return true
   }
@@ -125,7 +131,9 @@ export class Mailbox {
     this.waiter = undefined
     this.busy = true
     this.agentTask = true
-    resolve(this.queue.splice(0).join('\n\n'))
+    const posts = this.queue.splice(0)
+    this.report = posts.some(post => post.report)
+    resolve(posts.map(post => post.text).join('\n\n'))
   }
 }
 

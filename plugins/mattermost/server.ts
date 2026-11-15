@@ -9,7 +9,7 @@ import { basename, join } from 'path'
 import { type Config, type Post, type WsEvent } from './mattermost.ts'
 import { JOB_COMMAND_RE, JOB_TICK_MS, JobSession, commandText, tagValue, type CommandResult, type Run } from './jobs.ts'
 import { type StepKind } from './schedule.ts'
-import { RUN_DIR, TOOLS, agentNotice, agentRules, attachments, errorText, isLive, quote, readConfig, safeName, takeLock, type Lock } from './session.ts'
+import { RUN_DIR, TOOLS, agentNotice, agentRules, attachments, errorText, isLive, quote, readConfig, safeName, takeLock, type Follow, type Lock } from './session.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, isInterrupt, withLast, type Entry } from './transcript.ts'
 
 export const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -112,6 +112,8 @@ type Turn = {
   replyRoot?: string
   // A step of a job: its texts get no mention.
   job?: boolean
+  // A followed post asked for a report: the last text gets the mention.
+  report?: boolean
   start: number
   since: number
   promptOffset: number
@@ -157,6 +159,7 @@ export class Bridge extends JobSession {
     this.startPost = { text: `:large_green_circle: Session started on \`${hostname()}\` in \`${project}\`` }
     this.showStart()
     this.loadJob()
+    this.loadFollow()
   }
 
   // The SessionStart input, which has the model, can come after the start post, so the start post gets the model by an edit.
@@ -221,7 +224,7 @@ export class Bridge extends JobSession {
     const turn = this.turn
     this.turn = undefined
     const target = turn?.replyChannel ?? id.channelId
-    const owner = mention && turn?.fromMattermost && !turn.job ? `@${id.ownerUsername} ` : ''
+    const owner = mention && ((turn?.fromMattermost && !turn.job) || turn?.report) ? `@${id.ownerUsername} ` : ''
     const read = this.readTranscript(turn)
     this.enqueue(async () => {
       await read
@@ -290,6 +293,7 @@ export class Bridge extends JobSession {
   private async deliver(post: Post): Promise<void> {
     this.track(post)
     const files = attachments(post)
+    const thread = post.channel_id === this.id!.agentsChannelId ? post.root_id || post.id : post.root_id && post.root_id === this.job?.postId ? post.root_id : ''
     await this.mcp.notification({
       method: 'notifications/claude/channel',
       params: {
@@ -299,7 +303,7 @@ export class Bridge extends JobSession {
           post_id: post.id,
           channel_id: post.channel_id,
           ts: new Date(post.create_at).toISOString(),
-          ...(post.root_id && post.root_id === this.job?.postId ? { thread_id: post.root_id } : {}),
+          ...(thread ? { thread_id: thread } : {}),
           ...(files.length ? { attachments: files.map(file => `${file.name} (file_id=${file.id})`).join(', ') } : {}),
         },
       },
@@ -408,11 +412,11 @@ export class Bridge extends JobSession {
     return this.mailbox.agentTask
   }
 
-  protected async fromAgent(post: Post): Promise<void> {
+  protected async fromAgent(post: Post, follow?: Follow): Promise<void> {
     const sender = safeName(await this.userName(post.user_id))
     this.track(post)
-    const text = agentNotice(sender, post, attachments(post))
-    this.react(post.id, this.mailbox.offer(text) ? 'eyes' : 'no_entry_sign')
+    const text = agentNotice(sender, post, attachments(post), follow?.purpose)
+    this.react(post.id, this.mailbox.offer(text, follow) ? 'eyes' : 'no_entry_sign')
   }
 
   ask(): string {
@@ -468,7 +472,11 @@ export class Bridge extends JobSession {
           this.promptStarted(tag)
           return
         }
-        if (prompt.startsWith('<channel ') || prompt.startsWith('<task-notification>')) return
+        if (prompt.startsWith('<task-notification>')) {
+          turn.report = this.mailbox.report
+          return
+        }
+        if (prompt.startsWith('<channel ')) return
         turn.fromMattermost = false
         turn.replyChannel = undefined
         turn.replyRoot = undefined
