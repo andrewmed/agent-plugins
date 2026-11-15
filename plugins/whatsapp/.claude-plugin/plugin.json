@@ -1,0 +1,13 @@
+{
+  "name": "whatsapp",
+  "description": "Searches and reads the WhatsApp chats of the user in a local copy, and sends a draft only after the user approved it.",
+  "author": {
+    "name": "andrewmed"
+  },
+  "keywords": [
+    "whatsapp",
+    "baileys",
+    "skill"
+  ],
+  "repository": "https://github.com/andrewmed/agent-plugins"
+}

@@ -12,6 +12,11 @@
       "name": "mail",
       "source": "./plugins/mail",
       "description": "Reads two mailboxes over IMAP, saves drafts and trashes messages. It does not send."
+    },
+    {
+      "name": "whatsapp",
+      "source": "./plugins/whatsapp",
+      "description": "Searches and reads the WhatsApp chats of the user in a local copy, and sends a draft only after the user approved it."
     }
   ]
 }
