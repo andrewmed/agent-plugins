@@ -1,5 +1,13 @@
 # Backlog
 
+## whatsapp: module install before the lock, 2026-11-16
+
+Aim: two calls at the same time after an install do not break the modules.
+
+Now: `withSync` and `linkCommand` in `plugins/whatsapp/wa.ts` run `npm ci` before `takeLock`. Two calls after a new plugin version (Claude Code) or a `git clean` at a pi update can both run `npm ci` in `plugins/whatsapp`. `npm ci` removes `node_modules` first, so one call can fail. Also `hasModules()` checks only `node_modules/.package-lock.json`, so an install that stopped after this file was written is not done again.
+
+Change: run `install()` after `takeLock`, and check the marker again in the lock. Estimate: 5 lines in `wa.ts`, 10 lines in `dev/wa.test.ts`.
+
 ## whatsapp: no send after a closed connection, 2026-11-15
 
 Aim: a draft keeps the state `draft` when the connection closes before the send.

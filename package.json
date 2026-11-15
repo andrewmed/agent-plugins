@@ -5,6 +5,7 @@
   "description": "Plugins for Claude Code and pi.",
   "keywords": ["pi-package"],
   "pi": {
-    "extensions": ["./plugins/mattermost/pi.ts"]
+    "extensions": ["./plugins/mattermost/pi.ts"],
+    "skills": ["./plugins/whatsapp"]
   }
 }

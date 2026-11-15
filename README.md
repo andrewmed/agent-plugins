@@ -8,7 +8,7 @@ This repository is a Claude Code plugin marketplace and a pi package at the same
 | -------------------------------- | ----------- | --- | -------------------------------------------------------------------- |
 | [mattermost](plugins/mattermost) | yes         | yes | Connects each agent session to its own bot and channel in Mattermost |
 | [mail](plugins/mail)             | yes         | no  | Reads two mailboxes over IMAP, saves drafts and trashes messages     |
-| [whatsapp](plugins/whatsapp)     | yes         | no  | Searches WhatsApp chats in a local copy, sends approved drafts       |
+| [whatsapp](plugins/whatsapp)     | yes         | yes | Searches WhatsApp chats in a local copy, sends approved drafts       |
 
 Read the README of a plugin before you install it. A plugin can need its own configuration.
 
@@ -57,18 +57,21 @@ The plugins have no version number. Each commit in this repository is a new vers
 pi install git:github.com/andrewmed/agent-plugins
 ```
 
-The package gives pi the extensions of all plugins. To load only some of them, use the object form in `~/.pi/agent/settings.json`:
+The package gives pi the extensions and the skills in `pi` of the root `package.json`. To load only some of them, use the object form in `~/.pi/agent/settings.json`. A key that is not in the object loads all items of its type. An empty array loads none. This example loads only the mattermost extension and no skill:
 
 ```json
 {
   "packages": [
     {
       "source": "git:github.com/andrewmed/agent-plugins",
-      "extensions": ["plugins/mattermost/pi.ts"]
+      "extensions": ["plugins/mattermost/pi.ts"],
+      "skills": []
     }
   ]
 }
 ```
+
+To also load the whatsapp skill, use `"skills": ["plugins/whatsapp"]`.
 
 ### Automatic update
 
@@ -101,11 +104,11 @@ A plugin needs only the files for the harness that it supports.
 
 1. Make the folder `plugins/<name>` with `.claude-plugin/plugin.json`. Do not set `version` there.
 2. Add the plugin to `plugins` in `.claude-plugin/marketplace.json` with `"source": "./plugins/<name>"`.
-3. If the plugin has a pi extension, add its path to `pi.extensions` in the root `package.json`.
+3. If the plugin has a pi extension, add its path to `pi.extensions` in the root `package.json`. If it has a skill for pi, add the plugin folder to `pi.skills`.
 4. Add a row to the table in this file.
 5. Run `claude plugin validate .` and `claude plugin validate plugins/<name>`.
 
-A pi extension that runs `bun` or `npm` modules of its plugin folder does not work: pi installs only the dependencies of the root `package.json`.
+At an install from git or npm, pi installs only the dependencies of the root `package.json`. Thus a pi extension that loads `bun` or `npm` modules of its plugin folder does not work. A script that installs the modules of its plugin folder itself, as `plugins/whatsapp/wa.ts` does, works.
 
 ## License
 

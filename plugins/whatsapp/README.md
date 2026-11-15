@@ -1,12 +1,12 @@
 # whatsapp
 
-A Claude Code plugin with one skill. The skill searches and reads the WhatsApp chats of the user in a local copy. It also makes drafts, and sends a draft after the user approved it.
+A plugin for Claude Code and pi with one skill. The skill searches and reads the WhatsApp chats of the user in a local copy. It also makes drafts, and sends a draft after the user approved it.
 
 `wa.ts` connects as a linked device of the account of the user, with [Baileys](https://github.com/WhiskeySockets/Baileys), an unofficial WhatsApp Web client. The design and its reasons are in `dev/DESIGN.md`. The measured behavior is in `dev/NOTES.md`.
 
 ## Requirements
 
-Node 24 or later, and npm. At the first run of each plugin version, `wa.ts` runs `npm ci --ignore-scripts` in the plugin folder.
+Node 24 or later, and npm. When the modules are not installed, the next read command that syncs, or `link`, runs `npm ci --omit=dev --ignore-scripts` in the plugin folder. A read with `--offline` needs no modules. `send` does not install: it tells the agent to run a read command first. This occurs after each new plugin version in Claude Code, and in pi after an update of the git package to a new commit (`pi update` removes the untracked files of the package with `git clean`). A local package path in pi keeps its modules.
 
 ## Link
 
@@ -22,7 +22,7 @@ To unlink the device, remove it in Linked devices on the phone. To link again, d
 
 ## Approval of each send
 
-The script cannot know if you approved a draft. The agent asks you, as `SKILL.md` tells it. To make Claude Code also ask you before each send, add this rule to `permissions.ask` in `~/.claude/settings.json`:
+The script cannot know if you approved a draft. The agent asks you, as `SKILL.md` tells it. You approve in the terminal or in a Mattermost post. Pi has no permission prompt, so in pi this is the only control. To make Claude Code also ask you before each send, add this rule to `permissions.ask` in `~/.claude/settings.json`:
 
 ```json
 {
@@ -48,7 +48,7 @@ Delete the folder to remove all of it.
 
 ## Network
 
-`wa.ts` connects to `web.whatsapp.com` and `mmg.whatsapp.net`, and gets the current WhatsApp Web version from `raw.githubusercontent.com`. The first run of a plugin version also needs `registry.npmjs.org`. If the sandbox of Claude Code is on, allow these hosts or exclude the command.
+`wa.ts` connects to `web.whatsapp.com` and `mmg.whatsapp.net`, and gets the current WhatsApp Web version from `raw.githubusercontent.com`. The module install also needs `registry.npmjs.org`. A read with `--offline` needs no network. If the sandbox of Claude Code is on, allow these hosts or exclude the command. In pi, the agent tells you which host a sandbox blocks.
 
 ## Risks
 
