@@ -155,7 +155,12 @@ No environment variable. No configuration file.
 
 ### Link
 
-The user runs `node wa.ts link --phone <number>` in a terminal one time. The script asks for a pairing code (`sock.requestPairingCode`) and prints it. On the phone: Linked devices, Link with phone number, type the code. This needs no QR library.
+The user runs `node wa.ts link` in a terminal one time. There are two methods:
+
+- `link`: the script prints each `qr` string from `connection.update` as a QR code. On the phone: Linked devices, Link a device, scan the code. `qrcode-terminal` makes the code with half blocks (`small: true`), and the script sets the colors of each line to white on black, so a light terminal theme does not invert the code. Baileys rc13 has no renderer: its `printQRInTerminal` only writes a warning. When WhatsApp gives no more codes, Baileys closes the connection with code 408, and the script stops with an error that tells the user to run `link` again.
+- `link --phone <number>`: the script asks for a pairing code (`sock.requestPairingCode`) at the first `qr` and prints it. On the phone: Linked devices, Link with phone number, type the code.
+
+`link` installs the modules also when `node_modules` has no `qrcode-terminal`, because modules from before this dependency can be there.
 
 After the link, WhatsApp closes the connection with code 515. The script connects again one time. Then it stays connected and writes the history sync to the store. It prints the progress from `messaging-history.set` (`progress`, `syncType`). It stops when no history chunk came for 60 s and no chunk downloads, or after 30 minutes. Ctrl+C also stops it, at the end of the history chunk that downloads, as in "Sync". A history chunk that comes later goes into the store at a later sync.
 
@@ -223,7 +228,7 @@ wa.ts context ID [--chat CHAT] [--around 5] [--offline]
 wa.ts draft CHAT              text from stdin
 wa.ts drafts [--offline]
 wa.ts send N
-wa.ts link --phone NUMBER
+wa.ts link [--phone NUMBER]
 ```
 
 - `chats` prints `JID TYPE NAME +PHONE OLDEST`, newest first. `OLDEST` is the date of the oldest stored message.
@@ -329,3 +334,5 @@ Dropped:
 2026-11-15, peer review 3 (code). Accepted: an error after `sendMessage` gives `unknown` and says so; the ack listener is removed after the send; the status of `link` is incomplete after Ctrl+C, a close, the time limit or an event error; `SKILL.md` tells the agent to show the `to:` line with the JID; the `getMessage` gap after a crash is documented. Not accepted: an error acknowledgement is not final (Baileys does not send again after error 463, see the comment "No retry" in `handleBadAck`); a check of the chat JID for a receipt (the IDs come from `generateMessageIDV2`, and the JID can be in the LID or the phone form); a limit on the text length (WhatsApp refuses a text that is too long with an error acknowledgement, so the state is `failed`); a second atomic step in `sendDraft` (the `UPDATE ... WHERE state = 'draft'` with one changed row is atomic); the participant in a delete key.
 
 2026-11-15, review 4 (history loss at the close), with two peer reviews. Accepted: count the chunks with a wrap of `sock.ev.emit`; flush the event buffer before the close; close in the event of the last started chunk, because the offline queue starts the next node at once; separate counts for each socket after code 515. Not fixed, written as limits: a download longer than 40 s, a close by WhatsApp during a download, the app state sync on the first connection, `ON_DEMAND` chunks (`BACKLOG.md`).
+
+2026-11-16, peer review 5 (QR link). Accepted: an error in the `onQr` callback ends `connect()` with that error; `connect()` closes the socket before it throws an error of a link callback. Not changed: an error in the `onCode` callback, which was there before the QR link.

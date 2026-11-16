@@ -47,3 +47,16 @@ Baileys 7.0.0-rc13 source in `node_modules/@whiskeysockets/baileys/lib`. Not mea
 - Nothing in `processMessage` after the `messaging-history.set` emit needs the socket. `wa.ts` closes the socket inside that emit.
 - `ON_DEMAND` chunks have no `creds.update`, so `trackHistory` does not count them. `wa.ts` does not request them now.
 - In the `Syncing` state, `upsertMessage` runs `doAppStateSync` and `processMessage` in one `Promise.all`. `end()` calls `signalRepository.close()` before its first `await`, so a close stops the app state sync. `Syncing` occurs only when `accountSyncCounter` is 0, that is, on the first connection after the link. Peer review, not measured.
+
+## QR link without a scan, 2026-11-16
+
+Node 26.13.1 on macOS, Baileys 7.0.0-rc13, `qrcode-terminal` 0.12.0. `npm view qrcode-terminal`: version 0.12.0, no dependencies.
+
+Method: `HOME=<temporary folder> node wa.ts link`, with no scan. No device was linked.
+
+- WhatsApp gave 6 `qr` strings: the first after less than 1 s, the second 60 s later, each next one 20 s later. 160 s after the first one, Baileys closed the connection with code 408 ("QR refs attempts ended", `lib/Socket/socket.js`). `auth/` stayed empty.
+- One QR code is 63 columns and 32 rows with `small: true` (61 modules).
+- `(await import('qrcode-terminal')).default` gives the CommonJS module in Node with type stripping.
+- With `node_modules/qrcode-terminal` removed, `link` ran `npm ci` (71 packages, 2 s) and then printed the first QR code.
+
+Not tested: a scan with a phone, the 515 restart after a scan, the QR code in an SSH terminal and with a light theme. These need the phone of the user.

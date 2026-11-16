@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -453,4 +453,27 @@ test('getMessage: the stored proto decodes to the sent message', async () => {
   db.prepare('INSERT INTO sent(id, chat, proto) VALUES (?, ?, ?)').run('S1', DM, bytes)
   assert.equal(wa.sentProto(B, db, 'S1').conversation, 'hi ünïcode')
   assert.equal(wa.sentProto(B, db, 'S2'), undefined)
+})
+
+test('link: the QR code is a block of half blocks with fixed colors', async () => {
+  const render = await wa.qrRenderer()
+  const data = `2@${'A'.repeat(88)},${'B'.repeat(44)},${'C'.repeat(44)},${'D'.repeat(44)},1`
+  const lines = render(data).split('\n')
+  const cells = lines.map(line => {
+    const m = /^\x1b\[38;5;231;48;5;16m([█▀▄ ]+)\x1b\[0m$/.exec(line)
+    assert.ok(m, JSON.stringify(line))
+    return m[1]
+  })
+  const modules = cells[0].length - 2
+  assert.ok(modules >= 21 && modules % 4 === 1, `${modules} modules`)
+  assert.ok(cells.every(c => c.length === modules + 2))
+  assert.equal(cells.length, (modules + 1) / 2 + 1)
+  assert.notEqual(render(data), render(`${data}2`))
+})
+
+test('link: a bad --phone is an error', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-test-'))
+  const r = spawnSync(process.execPath, [WA, 'link', '--phone', 'abc'], { env: { ...process.env, HOME: home }, encoding: 'utf8' })
+  assert.equal(r.status, 1)
+  assert.match(r.stderr, /^error: --phone needs the phone number/)
 })

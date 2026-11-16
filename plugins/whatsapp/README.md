@@ -10,13 +10,25 @@ Node 24 or later, and npm. When the modules are not installed, the next read com
 
 ## Link
 
-Run this one time in a terminal, with the phone number of the account and the country code:
+Run this one time in a terminal:
+
+```sh
+node <plugin folder>/wa.ts link
+```
+
+The script prints a QR code. On the phone: WhatsApp > Settings > Linked devices > Link a device. Scan the code. The first code is valid for 60 s and each next code for 20 s. The script prints each one. When WhatsApp gives no more codes, the script stops with a time-out: run it again. The terminal must have 256 colors, and the window must have 63 columns and 35 rows or more.
+
+For a pairing code in place of the QR code, give the phone number of the account with the country code:
 
 ```sh
 node <plugin folder>/wa.ts link --phone 34600000000
 ```
 
-The script prints a pairing code. On the phone: WhatsApp > Settings > Linked devices > Link a device > Link with phone number instead. Type the code. Then the script writes the history that the phone sends to the store. This can take some minutes. The script stops when no history comes for 60 s. If you stop it with Ctrl+C, it first completes the part of the history that downloads, for up to 40 s.
+The script prints a pairing code. On the phone: WhatsApp > Settings > Linked devices > Link a device > Link with phone number instead. Type the code.
+
+The QR code and the pairing code let a phone link the device: do not show them to other persons while the script waits.
+
+After the link, the script writes the history that the phone sends to the store. This can take some minutes. The script stops when no history comes for 60 s. If you stop it with Ctrl+C, it first completes the part of the history that downloads, for up to 40 s.
 
 To unlink the device, remove it in Linked devices on the phone. To link again, delete `~/.local/state/whatsapp/auth` first.
 

@@ -19,6 +19,9 @@ const VERSION_LIMIT_MS = 10_000
 const SERVER_ACK = 2
 const STATUS_ERROR = 0
 const STUB_REVOKE = 1
+const QR_MODULE = 'qrcode-terminal'
+// White modules as foreground on a black background: the terminal theme cannot invert the code.
+const QR_COLORS = '\x1b[38;5;231;48;5;16m'
 
 const USAGE = `usage: node wa.ts <command>
   chats [--search TEXT] [--type user|group] [--limit 50] [--offline]
@@ -27,7 +30,7 @@ const USAGE = `usage: node wa.ts <command>
   draft CHAT                    the text on stdin
   drafts [--offline]
   send N
-  link --phone NUMBER           the user runs it in a terminal
+  link [--phone NUMBER]         the user runs it in a terminal: a QR code, or a pairing code with --phone
 CHAT: a JID, a phone number with the country code, or a part of a name.
 D: 2026-09-01, or 7d, 3w, 6m before today.`
 
@@ -402,11 +405,11 @@ export function sentProto(B: any, db: DatabaseSync, id?: string) {
   return row ? B.proto.Message.decode(row.proto) : undefined
 }
 
-export async function connect(p: Paths, db: DatabaseSync, link?: { phone: string, onCode: (code: string) => void }) {
+export async function connect(p: Paths, db: DatabaseSync, link?: { phone?: string, onCode: (code: string) => void, onQr: (qr: string) => void }) {
   const B: any = await import('@whiskeysockets/baileys')
   const auth = await B.useMultiFileAuthState(p.auth)
   const linked = !!auth.state.creds.account
-  if (!linked && !link) throw new NeedLink(`not linked. The user must run "node ${path.join(HERE, 'wa.ts')} link --phone NUMBER" in a terminal`)
+  if (!linked && !link) throw new NeedLink(`not linked. The user must run "node ${path.join(HERE, 'wa.ts')} link" in a terminal for a QR code, or with "--phone NUMBER" for a pairing code`)
   if (linked && link) fail(`already linked. To link again, delete ${p.auth}, then run link`)
   const version = await Promise.race([B.fetchLatestBaileysVersion().then((r: any) => r.version), sleep(VERSION_LIMIT_MS)])
     .catch(() => undefined)
@@ -432,7 +435,9 @@ export async function connect(p: Paths, db: DatabaseSync, link?: { phone: string
     let asked = false
     const r: any = await new Promise(resolve => {
       sock.ev.on('connection.update', (u: any) => {
-        if (u.qr && link && !asked) {
+        if (u.qr && link && !link.phone) {
+          try { link.onQr(u.qr) } catch (error) { resolve({ error }) }
+        } else if (u.qr && link && !asked) {
           asked = true
           sock.requestPairingCode(link.phone).then(link.onCode, (error: any) => resolve({ error }))
         }
@@ -448,11 +453,15 @@ export async function connect(p: Paths, db: DatabaseSync, link?: { phone: string
       })
     })
     if (r.open) return { sock, B, state }
-    if (r.error) throw r.error
+    if (r.error) {
+      endSock(sock)
+      throw r.error
+    }
     if (r.code === 515) {
       state.closed = null
       continue
     }
+    if (r.code === 408 && link) fail(`${closeText(408)}: WhatsApp closed the connection before a link. Run link again`)
     if (r.code === 401) throw new NeedLink(`${closeText(401)}. The user must delete ${p.auth}, then run link`)
     throw new Error(closeText(r.code))
   }
@@ -797,15 +806,28 @@ export async function sendCommand(p: Paths, db: DatabaseSync, n: number, connect
   }
 }
 
-async function linkCommand(p: Paths, db: DatabaseSync, phone: string) {
-  if (!hasModules()) install()
+export async function qrRenderer() {
+  const lib: any = (await import(QR_MODULE)).default
+  return (data: string) => {
+    let text = ''
+    lib.generate(data, { small: true }, (s: string) => { text = s })
+    return text.trimEnd().split('\n').map(line => `${QR_COLORS}${line}\x1b[0m`).join('\n')
+  }
+}
+
+async function linkCommand(p: Paths, db: DatabaseSync, phone?: string) {
+  // Modules from before the QR link do not have the QR module.
+  if (!hasModules() || !fs.existsSync(path.join(HERE, 'node_modules', QR_MODULE))) install()
   const lock = takeLock(p.lock, 0)
   if (!lock) fail('another call holds the lock')
   let conn: any = null
   try {
+    const render = phone ? null : await qrRenderer()
+    let codes = 0
     conn = await connect(p, db, {
       phone,
       onCode: code => console.log(`Pairing code: ${code}\nOn the phone: WhatsApp > Settings > Linked devices > Link a device > Link with phone number instead. Type the code.`),
+      onQr: qr => console.log(`${render!(qr)}\nQR code ${++codes}, valid for ${codes === 1 ? 60 : 20} s. On the phone: WhatsApp > Settings > Linked devices > Link a device. Scan the code.`),
     })
     console.log(`Linked. The script now writes the history sync to the store. It stops when no history comes for ${LINK_QUIET_MS / 1000} s.`)
     const B = conn.B
@@ -882,8 +904,8 @@ export async function main(argv: string[]) {
       if (args.length !== 1 || !/^\d+$/.test(args[0])) fail('usage: wa.ts send N')
       return out(await sendCommand(p, db, +args[0]))
     case 'link': {
-      const phone = (o.phone ?? '').replace(/[\s()+.-]/g, '')
-      if (!/^\d{6,15}$/.test(phone)) fail('give the phone number of the account with --phone and the country code, for example --phone 34600000000')
+      const phone = o.phone?.replace(/[\s()+.-]/g, '')
+      if (phone !== undefined && !/^\d{6,15}$/.test(phone)) fail('--phone needs the phone number of the account with the country code, for example --phone 34600000000')
       return out(await linkCommand(p, db, phone))
     }
     default: fail(`unknown command "${cmd}"\n${USAGE}`)
