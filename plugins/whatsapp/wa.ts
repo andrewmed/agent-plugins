@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
-import { inspect, parseArgs } from 'node:util'
+import { parseArgs } from 'node:util'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SYNC_LIMIT_MS = 20_000
@@ -32,10 +32,6 @@ CHAT: a JID, a phone number with the country code, or a part of a name.
 D: 2026-09-01, or 7d, 3w, 6m before today.`
 
 const SILENT: any = { level: 'silent', child: () => SILENT, trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {} }
-const say = (level: string) => (...a: any[]) =>
-  console.error(`baileys ${level}:`, ...a.map(x => typeof x === 'string' ? x : inspect(x, { depth: 5, breakLength: Infinity })))
-const DEBUG: any = { ...SILENT, level: 'info', child: () => DEBUG, info: say('info'), warn: say('warn'), error: say('error'), fatal: say('fatal') }
-const LOGGER = process.env.WA_DEBUG === '1' ? DEBUG : SILENT
 
 export class UserError extends Error {
   exitCode = 1
@@ -419,7 +415,7 @@ export async function connect(p: Paths, db: DatabaseSync, link?: { phone: string
     const sock = B.makeWASocket({
       ...(version ? { version } : {}),
       auth: auth.state,
-      logger: LOGGER,
+      logger: SILENT,
       browser: B.Browsers.macOS('Chrome'),
       markOnlineOnConnect: false,
       syncFullHistory: true,

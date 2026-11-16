@@ -20,8 +20,6 @@ The script prints a pairing code. On the phone: WhatsApp > Settings > Linked dev
 
 To unlink the device, remove it in Linked devices on the phone. To link again, delete `~/.local/state/whatsapp/auth` first.
 
-If the link fails, run it again with `WA_DEBUG=1` before `node`. The script then writes the `info`, `warn` and `error` lines of Baileys to stderr. These lines can contain public keys and IDs of the account.
-
 ## Approval of each send
 
 The script cannot know if you approved a draft. The agent asks you, as `SKILL.md` tells it. You approve in the terminal or in a Mattermost post. Pi has no permission prompt, so in pi this is the only control. To make Claude Code also ask you before each send, add this rule to `permissions.ask` in `~/.claude/settings.json`:
