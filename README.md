@@ -9,6 +9,7 @@ This repository is a Claude Code plugin marketplace and a pi package at the same
 | [mattermost](plugins/mattermost) | yes         | yes | Connects each agent session to its own bot and channel in Mattermost |
 | [mail](plugins/mail)             | yes         | no  | Reads two mailboxes over IMAP, saves drafts and trashes messages     |
 | [whatsapp](plugins/whatsapp)     | yes         | yes | Searches WhatsApp chats in a local copy, sends approved drafts       |
+| [telegram](plugins/telegram)     | yes         | yes | Searches Telegram chats, one chat at a time, sends approved drafts   |
 
 Read the README of a plugin before you install it. A plugin can need its own configuration.
 
@@ -71,7 +72,7 @@ The package gives pi the extensions and the skills in `pi` of the root `package.
 }
 ```
 
-To also load the whatsapp skill, use `"skills": ["plugins/whatsapp"]`.
+To also load the whatsapp and telegram skills, use `"skills": ["plugins/whatsapp", "plugins/telegram"]`.
 
 ### Automatic update
 

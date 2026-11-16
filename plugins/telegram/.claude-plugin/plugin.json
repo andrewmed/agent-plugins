@@ -1,0 +1,13 @@
+{
+  "name": "telegram",
+  "description": "Searches and reads the Telegram chats of the user, one chat at a time, and sends a draft only after the user approved it.",
+  "author": {
+    "name": "andrewmed"
+  },
+  "keywords": [
+    "telegram",
+    "telethon",
+    "skill"
+  ],
+  "repository": "https://github.com/andrewmed/agent-plugins"
+}
