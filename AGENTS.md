@@ -10,7 +10,7 @@ A Claude Code plugin marketplace and a pi package. Each plugin is a folder in `p
 ## Release
 
 - `plugins/mattermost/.claude-plugin/plugin.json` has no `version`, so each commit is a new version. Claude Code with the automatic update on, and pi, get a pushed commit at a later start. Thus a push to `main` is a release.
-- A running session keeps the code that it loaded at its start. The Mattermost connection of the session that edits this repository runs the installed copy, not the working copy.
+- A running session keeps the code that it loaded at its start. The `claude` shell function in `~/.zsh/ai.zsh` starts each session with `--plugin-dir` set to `plugins/`, so a session loads the working copy at its start.
 
 ## Bun and Node
 
@@ -29,4 +29,4 @@ A Claude Code plugin marketplace and a pi package. Each plugin is a folder in `p
 
 Symptom: a post gets the `eyes` reaction, but no turn starts in Claude Code. The direction from the terminal to Mattermost works.
 
-Cause: the `claude` process started without `--dangerously-load-development-channels plugin:mattermost@andrewmed`. The MCP log in the folder `mcp-logs-plugin-mattermost-mattermost` then has the line `Channel notifications skipped: server plugin:mattermost:mattermost not in --channels list for this session`. A shell that started before a change of the `claude` shell function keeps the old function.
+Cause: the `claude` process started without `--dangerously-load-development-channels plugin:mattermost@inline`. For an install from the marketplace, the name is `plugin:mattermost@andrewmed`. The MCP log in the folder `mcp-logs-plugin-mattermost-mattermost` then has the line `Channel notifications skipped: server plugin:mattermost:mattermost not in --channels list for this session`. A shell that started before a change of the `claude` shell function keeps the old function.
