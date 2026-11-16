@@ -14,6 +14,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tg  # noqa: E402
 from telethon import errors, helpers  # noqa: E402
+from telethon.tl import types  # noqa: E402
 from telethon.tl.types import auth  # noqa: E402
 
 ANN = SimpleNamespace(id=7, is_user=True, name="Ann‮", input_entity="peer of Ann",
@@ -57,9 +58,17 @@ class TgTest(unittest.TestCase):
 
     def test_text(self):
         self.assertEqual(tg.check_text("a\tb\r\nc \n\n"), "a\tb\nc")
-        for bad in ("", " \n", "a\x00b", "a\x1bb", "a‮b", "a⁦b"):
+        for bad in ("", " \n", "a\x00b", "a\x1bb", "a‮b", "a⁦b", "a\u200bb", "a\u200fb", "a\u061cb",
+                    "a\u2060b", "a\u206ab", "a\ufeffb"):
             with self.assertRaises(SystemExit):
                 tg.check_text(bad)
+        self.assertEqual(tg.check_text("👨\u200d👩"), "👨\u200d👩")
+
+    def test_output_has_no_control_characters(self):
+        self.assertEqual(tg.title(ANN), "Ann")
+        message = SimpleNamespace(out=False, sender=types.User(id=1, first_name="Bob\x1b[31m\u200e"),
+                                  fwd_from=None, action=None, media=None, text="a\x1b[2Jb‮\nc\td")
+        self.assertEqual((tg.sender(message), tg.content(message)), ("Bob[31m", "a[2Jb\nc\td"))
 
     def test_draft_is_fixed(self):
         draft = tg.get_draft(self.db, self.n)

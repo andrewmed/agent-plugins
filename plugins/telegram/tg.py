@@ -25,7 +25,8 @@ SNIPPET = 300
 # The answer to a second copy does not tell if the first copy went out, so `send` makes one attempt.
 # Telethon makes `request_retries + 1` attempts (`helpers.retry_range`).
 ONE_ATTEMPT = {"auto_reconnect": False, "request_retries": 0, "flood_sleep_threshold": 0}
-BAD_TEXT = re.compile(r"[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]")
+# U+200D stays, because emoji sequences use it.
+BAD_TEXT = re.compile(r"[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩\u061c\u200b\u200c\u200e\u200f\u2060-\u2064\u206a-\u206f\ufeff]")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS drafts(n INTEGER PRIMARY KEY AUTOINCREMENT, chat INTEGER NOT NULL, label TEXT NOT NULL,
   text TEXT NOT NULL, created_ts INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'draft', message_id INTEGER, error TEXT);
@@ -96,7 +97,7 @@ def kind(dialog):
 def title(dialog):
     if dialog.is_user and dialog.entity.is_self:
         return "Saved Messages"
-    return dialog.name or "?"
+    return BAD_TEXT.sub("", dialog.name or "") or "?"
 
 
 def username(entity):
@@ -155,7 +156,7 @@ def stamp(message):
 
 
 def sender(message):
-    return "me" if message.out else utils.get_display_name(message.sender) or "?"
+    return "me" if message.out else BAD_TEXT.sub("", utils.get_display_name(message.sender)) or "?"
 
 
 def content(message):
@@ -172,7 +173,7 @@ def content(message):
         parts.append(f"[{type(media).__name__.removeprefix('MessageMedia').lower()}]")
     if message.text:
         parts.append(message.text)
-    return " ".join(parts)
+    return BAD_TEXT.sub("", " ".join(parts))
 
 
 def snippet(text, query):
