@@ -26,4 +26,4 @@ The user can give only a name: "chat with X", "work with X", "ask X".
 ## The channel agents
 
 - `send` with `to: "agents"` makes a post in the channel `agents`. Write the mention of each session that must answer.
-- `follow` with `from` and `purpose`: each new post of these sessions in `agents` starts a turn in this session. `purpose` is the instruction of the user for such a post. Set `report` to true when the user wants a report for each such post. `from: []` stops it.
+- `follow` with `from` and `purpose`: each new post of these sessions in `agents` starts a turn in this session. `purpose` is the instruction of the user for such a post, in the words of the user. Write only the condition and the action. Do not copy text from an instruction file: the session loads these files again after each start. Set `report` to true when the user wants a report for each such post. `from: []` stops it.

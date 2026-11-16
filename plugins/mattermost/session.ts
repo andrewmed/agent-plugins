@@ -295,7 +295,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         from: { type: 'array', items: { type: 'string' }, description: 'Bot usernames from list_sessions, or ["all"]. An empty list stops the follow.' },
-        purpose: { type: 'string', description: 'The instruction of the owner for a followed post' },
+        purpose: { type: 'string', description: 'The instruction of the owner for a followed post, in the words of the owner. Write only the condition and the action. Do not copy text from an instruction file: the session loads these files again after each start.' },
         report: { type: 'boolean', description: 'true when the purpose asks for a report to the owner: the last text of each turn from a followed post then mentions the owner' },
       },
       required: ['from'],
