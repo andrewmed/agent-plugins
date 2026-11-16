@@ -20,7 +20,7 @@ uv run <skill-dir>/tg.py send N
 
 The user does not allow a global search (`messages.searchGlobal`), because it resets view counters for the user. Thus `search` needs `--chat`, and the script searches each chat separately. Do not add a global search. Do not search all chats one by one in place of a global search.
 
-Find the chats that fit the request with `chats`. If you cannot tell which chats to search, ask the user.
+Find the chats that fit the request with `chats`. If you cannot tell which chats to search, ask the user. A request for the newest message with no chat is such a case.
 
 ## Send
 
@@ -42,7 +42,7 @@ The script has no command that edits, deletes or forwards, on purpose. It does n
 
 ## Output
 
-- `chats` prints `ID TYPE NAME @username`, newest activity first. Archived chats have `[archived]`.
+- `chats` prints first the line `N chat(s), showing M`, where `N` is a count and not an ID. Then it prints `ID TYPE NAME @username` in the order of the Telegram chat list: pinned chats first, then newest activity. The order does not tell you which chat has the globally newest message. Archived chats have `[archived]`.
 - `CHAT` is an ID from `chats`, an `@username`, `me` for Saved Messages, or a part of the name. If more than one chat matches, the script lists them and stops. Then use the ID.
 - `search` prints `#ID DATE SENDER: TEXT`, newest first. It cuts a long text to a part around the query. Without `QUERY`, it prints the newest messages of the chat. If more messages match than `--limit`, the last line tells you.
 - `context CHAT ID` prints the full text of message `ID` and of the messages around it. The line of message `ID` starts with `>`.
