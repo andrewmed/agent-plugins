@@ -525,7 +525,8 @@ export async function withSync(p: Paths, db: DatabaseSync, offline: boolean, wor
 
 // ---------- output
 
-const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/g
+// U+200D stays, because emoji sequences use it.
+const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩\u061c\u200b\u200c\u200e\u200f\u2060-\u2064\u206a-\u206f\ufeff]/g
 
 export const clean = (t: any) => String(t ?? '').replace(/\r\n?/g, '\n').replace(CONTROL, '').replace(/\t/g, ' ')
 export const oneLine = (t: any) => clean(t).replace(/\n/g, ' ⏎ ')
@@ -708,7 +709,7 @@ export function draftsLines(db: DatabaseSync) {
     : ['no drafts']
 }
 
-const BAD_DRAFT = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/
+const BAD_DRAFT = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩\u061c\u200b\u200c\u200e\u200f\u2060-\u2064\u206a-\u206f\ufeff]/
 
 export function checkDraftText(raw: string) {
   const t = raw.replace(/\r\n?/g, '\n').replace(/\s+$/, '')

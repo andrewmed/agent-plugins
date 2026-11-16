@@ -140,6 +140,7 @@ test('the search query is literal text, and control characters are removed', () 
   assert.match(wa.searchLines(db, 'invo', {})[0], /#Q2 .*: invoice total ⏎ line two$/)
   assert.deepEqual(wa.searchLines(db, '"*"', {}), ['no messages'])
   assert.equal(wa.oneLine('a\u001b[31mb\r\nc⁦'), 'a[31mb ⏎ c')
+  assert.equal(wa.clean('a\u200bb\u200ec\ufeff\u206ad\u061c'), 'abcd')
 })
 
 test('search filters by chat and date, and context shows the neighbours', () => {
@@ -175,6 +176,9 @@ test('drafts do not change, and an ambiguous chat stops the draft', async () => 
   assert.deepEqual(lines, ['draft 1: draft', `to: Team A (${GROUP})`, '----- text -----', 'hi', 'there', '----- end -----'])
   assert.throws(() => db.prepare('UPDATE drafts SET text = ? WHERE n = 1').run('changed'), /a draft does not change/)
   assert.throws(() => wa.checkDraftText('a\u0007b'), /control characters/)
+  for (const c of ['\u200b', '\u200f', '\u061c', '\u2060', '\u206a', '\ufeff'])
+    assert.throws(() => wa.checkDraftText(`a${c}b`), /control characters/)
+  assert.equal(wa.checkDraftText('👨\u200d👩'), '👨\u200d👩')
   assert.throws(() => wa.checkDraftText(' \n'), /empty/)
   assert.equal(wa.checkDraftText('a\r\nb\n\n'), 'a\nb')
 })
