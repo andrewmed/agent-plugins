@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { Bridge, Mailbox, jobStepKind, parseVerdict, terminalCommand } from '../server.ts'
+import { Bridge, HELP_TEXT, Mailbox, jobStepKind, parseVerdict, terminalCommand } from '../server.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, withLast, type Entry } from '../transcript.ts'
 import { FOLLOW_LIMIT, LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, readFollow, route, safeFileName, sessionName, takeLock, untilStarted, type RouteContext } from '../session.ts'
 import { ApiError, Socket, botUsername, markedSession, provision, sessionMarker, type Post } from '../mattermost.ts'
@@ -1373,6 +1373,16 @@ describe('job', () => {
     expect(bridge.job).toBeUndefined()
     expect(sent).toEqual([])
     expect(posted.map(made => made.message)).toEqual(Array(2).fill('@o A job command works only in the channel of the session.'))
+  })
+
+  test('/help lists the commands in the channel and in a direct message, and does not go to the model', async () => {
+    const { posted, sent, owner } = jobBridge()
+    await owner('h1', '/help')
+    await owner('h2', ' /help ', { channel_id: 'dm' })
+    await owner('h3', '/help me')
+    expect(posted.map(made => made.message)).toEqual(Array(2).fill(`@o ${HELP_TEXT}`))
+    expect(HELP_TEXT).toContain('`/every <interval>`')
+    expect(sent.map(note => note.params.content)).toEqual(['/help me'])
   })
 
   test('/job, /stop, /start and /drop with no job, and with text', async () => {

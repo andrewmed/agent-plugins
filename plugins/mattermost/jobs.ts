@@ -6,6 +6,15 @@ import { LOOP_LIMIT, STATE_DIR, Session, errorText, isNormalPost } from './sessi
 
 export const JOB_COMMAND_RE = /^\/(every|job|stop|start|drop)(?=\s|$)/
 export const JOB_TICK_MS = 30_000
+export const HELP_RE = /^\/help$/
+export const JOB_HELP = [
+  'Job commands, only in the channel of the session:',
+  '- `/every <interval>` and steps: makes a job. Example: `/every 30m Examine the disk space.`',
+  '- `/job`: shows the job.',
+  '- `/stop`: stops the job.',
+  '- `/start`: starts the job again.',
+  '- `/drop`: deletes the job.',
+].join('\n')
 const QUIET_MS = 300_000
 const PROMPT_START_MS = 30_000
 const STEP_PREVIEW_CHARS = 100

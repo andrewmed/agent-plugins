@@ -230,6 +230,24 @@ describe('commands', () => {
     expect(selected).toEqual([])
     expect(messages()[0]).toContain('matches 2 models')
   })
+  test('/help lists the commands of the session and does not start a run', async () => {
+    const commands = [
+      { name: 'skill:state', source: 'skill' },
+      { name: 'review', source: 'prompt' },
+      { name: 'mattermost-new', source: 'extension' },
+      { name: 'skill:stop', source: 'skill' },
+      { name: 'compact', source: 'prompt' },
+    ]
+    const { bridge, sent, messages } = setup({ commands })
+    await bridge.fromOwner(post({ message: '/help' }))
+    await bridge.out
+    expect(sent).toEqual([])
+    expect(messages()).toHaveLength(1)
+    expect(messages()[0]).toContain('- Skills: `/state`\n')
+    expect(messages()[0]).toContain('- Prompt templates: `/review`\n')
+    expect(messages()[0]).toContain('- Extension commands: none')
+    expect(messages()[0]).toContain('`/every <interval>`')
+  })
   test('/thinking and /effort set the level', async () => {
     const { bridge, messages } = setup()
     await bridge.fromOwner(post({ message: '/effort low' }))

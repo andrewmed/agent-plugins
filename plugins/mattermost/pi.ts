@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, sep } from 'path'
 import { setTimeout as sleep } from 'timers/promises'
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import type { Config, Post } from './mattermost.ts'
-import { JOB_COMMAND_RE, JOB_TICK_MS, JobSession, tagValue, type CommandResult, type Run } from './jobs.ts'
+import { JOB_COMMAND_RE, JOB_HELP, JOB_TICK_MS, JobSession, tagValue, type CommandResult, type Run } from './jobs.ts'
 import type { StepKind } from './schedule.ts'
 import { RUN_DIR, STATE_DIR, TOOLS, agentNotice, agentRules, attachmentList, attachments, errorText, isLive, quote, readConfig, safeName, takeLock, type Follow, type Lock } from './session.ts'
 
@@ -14,7 +14,8 @@ const NEW_SESSION_COMMAND = 'mattermost-new'
 const COMMAND_RE = /^\/([\w:.-]+)(?:\s+([\s\S]*))?$/
 const COMPACT_STEP_RE = /^\/compact(?: [^\x00-\x1f\x7f-\x9f]+)?$/
 const REFUSED_STEP_RE = /^(?:\/(?:new|clear|context|model|effort|thinking)(?: [^\x00-\x1f\x7f-\x9f]+)?|! [^\x00-\x1f\x7f-\x9f]+)$/
-const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+const TAKEN_NAMES = new Set(['compact', 'new', 'clear', 'context', 'model', 'thinking', 'effort', 'help', 'every', 'job', 'stop', 'start', 'drop'])
+const THINKING_LEVELS =['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const HOLD_POLL_MS = 200
 const TYPING_MS = 4000
 const START_WAIT_MS = 3000
@@ -385,6 +386,8 @@ export class PiBridge extends JobSession {
       case 'thinking':
       case 'effort':
         return this.selectThinking(post, args)
+      case 'help':
+        if (!args) return this.help(post)
     }
     const known = this.pi.getCommands()
     const command = known.find(entry => entry.name === name) ?? known.find(entry => entry.name === `skill:${name}`)
@@ -403,6 +406,31 @@ export class PiBridge extends JobSession {
       this.beginReply(post)
       send()
     })
+  }
+
+  private help(post: Post): void {
+    const names = (source: string): string => {
+      const found = this.pi
+        .getCommands()
+        .filter(entry => entry.source === source && entry.name !== NEW_SESSION_COMMAND)
+        .map(entry => entry.name.replace(/^skill:/, ''))
+        .filter(name => !TAKEN_NAMES.has(name))
+      return found.length ? found.map(name => `\`/${name}\``).join(', ') : 'none'
+    }
+    this.say(post.channel_id, [
+      'Commands of a post:',
+      '- `/compact [text]`: compacts the context.',
+      '- `/new`, `/clear`: starts a new session.',
+      '- `/context`: shows the use of the context.',
+      '- `/model [name]`: shows or selects the model.',
+      `- \`/thinking [level]\`, \`/effort [level]\`: shows or selects the thinking level: ${THINKING_LEVELS.join(', ')}.`,
+      '- `/help`: shows this list.',
+      `- Skills: ${names('skill')}`,
+      `- Prompt templates: ${names('prompt')}`,
+      `- Extension commands: ${names('extension')}`,
+      '',
+      JOB_HELP,
+    ].join('\n'))
   }
 
   private compact(post: Post, instructions: string): void {

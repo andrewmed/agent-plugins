@@ -7,7 +7,7 @@ import { mkdirSync, readdirSync, rmSync } from 'fs'
 import { hostname } from 'os'
 import { basename, join } from 'path'
 import { type Config, type Post, type WsEvent } from './mattermost.ts'
-import { JOB_COMMAND_RE, JOB_TICK_MS, JobSession, commandText, tagValue, type CommandResult, type Run } from './jobs.ts'
+import { HELP_RE, JOB_COMMAND_RE, JOB_HELP, JOB_TICK_MS, JobSession, commandText, tagValue, type CommandResult, type Run } from './jobs.ts'
 import { type StepKind } from './schedule.ts'
 import { RUN_DIR, TOOLS, agentNotice, agentRules, attachments, errorText, isLive, quote, readConfig, safeName, takeLock, type Follow, type Lock } from './session.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, isInterrupt, withLast, type Entry } from './transcript.ts'
@@ -36,6 +36,17 @@ export function terminalCommand(message: string): string | undefined {
   const text = message.trim()
   return TERMINAL_COMMAND_RE.test(text) ? text : undefined
 }
+
+export const HELP_TEXT = [
+  'Commands of a post:',
+  '- `/<skill>`: runs a skill or a custom command of the session. The names of the other commands in this list are not available.',
+  '- `/compact [text]`, `/clear`, `/context`, `/model <name>`, `/effort <level>`: the plugin types the command in the terminal.',
+  '- `! <command>`: runs a shell command in the session.',
+  '- `yes <id>`, `no <id>`: answers a permission prompt.',
+  '- `/help`: shows this list.',
+  '',
+  JOB_HELP,
+].join('\n')
 
 export function commandMessage(owner: string, command: string, output: string | undefined): string {
   if (output === undefined) return `@${owner} :warning: \`${command}\` was typed in the terminal, but no output appeared. Look at the terminal.`
@@ -265,6 +276,10 @@ export class Bridge extends JobSession {
     const verdict = parseVerdict(post.message)
     if (verdict && this.permissions.has(verdict.requestId)) {
       await this.answerPermission(verdict.requestId, verdict.behavior, post.id)
+      return
+    }
+    if (HELP_RE.test(post.message.trim())) {
+      this.say(post.channel_id, HELP_TEXT)
       return
     }
     const jobCommand = JOB_COMMAND_RE.exec(post.message.trim())

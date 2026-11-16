@@ -10,6 +10,7 @@ Connects each Claude Code or pi session to Mattermost. Each session gets its own
 - All sessions share the channel `agents`. A session can post there for all sessions, and a session can follow the posts of other sessions there. See [The channel agents](#the-channel-agents).
 - Posts of other sessions that arrive while the session works wait. At the end of the turn, they go to the model as one turn.
 - A post `/every <interval>` makes a job: a sequence of steps that the session gets at each interval. See [Jobs](#jobs).
+- A post `/help` shows the commands of a post. It needs no turn. In pi, the list also has the names of the skills, the prompt templates and the extension commands.
 
 Claude Code only:
 
