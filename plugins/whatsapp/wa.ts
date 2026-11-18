@@ -26,6 +26,7 @@ const QR_COLORS = '\x1b[38;5;231;48;5;16m'
 const USAGE = `usage: node wa.ts <command>
   chats [--search TEXT] [--type user|group] [--limit 50] [--offline]
   search [QUERY] [--chat CHAT ...] [--since D] [--before D] [--limit 20] [--offline]
+  read CHAT [--since D] [--before D] [--limit 20] [--offline]
   context ID [--chat CHAT] [--around 5] [--offline]
   draft CHAT                    the text on stdin
   drafts [--offline]
@@ -889,6 +890,9 @@ export async function main(argv: string[]) {
   switch (cmd) {
     case 'chats': return read(() => chatsLines(db, o))
     case 'search': return read(() => searchLines(db, args.join(' '), o))
+    case 'read':
+      if (args.length !== 1 || o.chat) fail('usage: wa.ts read CHAT [--since D] [--before D] [--limit 20]')
+      return read(() => searchLines(db, '', { ...o, chat: args }))
     case 'context':
       if (args.length !== 1) fail('usage: wa.ts context ID [--chat CHAT] [--around 5]')
       return read(() => contextLines(db, args[0], o))

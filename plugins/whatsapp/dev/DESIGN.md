@@ -38,7 +38,7 @@ Thus the skill has a local store, and all search runs on it. The store is not co
 
 ### Local read, sync with a time limit
 
-Each read command (`chats`, `search`, `context`, `drafts`) and `draft`:
+Each read command (`chats`, `search`, `read`, `context`, `drafts`) and `draft`:
 
 1. Syncs, unless `--offline` is given (see "Sync").
 2. Reads the store. SQLite in WAL mode, so a read needs no lock.
@@ -224,6 +224,7 @@ The read commands have the same form as `tg.py`, so the agent uses one pattern:
 ```
 wa.ts chats [--search TEXT] [--type user|group] [--limit 50] [--offline]
 wa.ts search [QUERY] [--chat CHAT ...] [--since D] [--before D] [--limit 20] [--offline]
+wa.ts read CHAT [--since D] [--before D] [--limit 20] [--offline]
 wa.ts context ID [--chat CHAT] [--around 5] [--offline]
 wa.ts draft CHAT              text from stdin
 wa.ts drafts [--offline]
@@ -233,6 +234,7 @@ wa.ts link [--phone NUMBER]
 
 - `chats` prints `JID TYPE NAME +PHONE OLDEST`, newest first. `OLDEST` is the date of the oldest stored message.
 - `search` prints `#ID DATE CHAT SENDER: TEXT`, newest first. `QUERY` is literal text: the script puts it in FTS5 as one quoted phrase, with each `"` doubled, and a `*` after the phrase, so the last word can be the start of a word. A query with no words finds nothing. `--chat` is optional: a search of all chats reads only the local store, so it has no effect on the account. This is different from `tg.py`.
+- `read` prints the newest messages of one chat, as `search` with no `QUERY` and one `--chat` does.
 - `context` prints message `ID` and the messages around it. The line of `ID` starts with `>`. `ID` comes from the `search` output. `--chat` is necessary only when two chats have a message with that ID.
 - `CHAT` is a JID, a phone number, or a part of a name. If more than one chat matches, the script lists them and stops.
 - Dates as in `tg.py`: `2026-09-01` or `7d`, `3w`, `6m`. `ts` is in seconds UTC in the store. The output and the date options use local time.

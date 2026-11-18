@@ -15,6 +15,8 @@ The copy is not complete. If a message is not found, give the dates that the sto
 
 `search` searches all chats when there is no `--chat`. The query is literal text, and its last word can be the start of a word.
 
+`read CHAT` prints the newest messages of one chat, newest first. `--since`, `--before` and `--limit` set the range. Use `read` to read a chat, and `search` to find a text.
+
 ## Send
 
 1. Run `wa.ts draft CHAT` with the text on stdin, from a quoted heredoc. The output gives the draft number, the recipient and the text. The draft is only in the local store. WhatsApp and the phone do not show it.

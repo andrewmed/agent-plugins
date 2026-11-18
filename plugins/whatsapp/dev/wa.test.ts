@@ -477,3 +477,29 @@ test('link: a bad --phone is an error', () => {
   assert.equal(r.status, 1)
   assert.match(r.stderr, /^error: --phone needs the phone number/)
 })
+
+test('read CHAT prints the newest messages of one chat', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-test-'))
+  const p = wa.paths(path.join(home, '.local/state/whatsapp'))
+  wa.prepareState(p)
+  const db = wa.openStore(p.db)
+  wa.applyEvents(db, {
+    'messages.upsert': {
+      type: 'notify',
+      messages: [
+        msg(DM, 'R1', { conversation: 'first' }, { ts: 1_700_000_000 }),
+        msg(DM, 'R2', { conversation: 'second' }, { ts: 1_700_000_100 }),
+        msg(GROUP, 'R3', { conversation: 'other chat' }, { ts: 1_700_000_200, participant: DM }),
+      ],
+    },
+  })
+  db.close()
+  const run = (...a: string[]) => spawnSync(process.execPath, [WA, ...a], { env: { ...process.env, HOME: home }, encoding: 'utf8' })
+  const r = run('read', DM, '--offline')
+  const lines = r.stdout.trim().split('\n')
+  assert.match(lines[1], /^chat: /)
+  assert.deepEqual(lines.slice(2).map(l => l.split(' ')[0]), ['#R2', '#R1'])
+  assert.deepEqual(run('read', '+34 600 000 001', '--offline').stdout, r.stdout)
+  assert.equal(run('read', '--offline').status, 1)
+  assert.equal(run('read', DM, '--chat', DM, '--offline').status, 1)
+})
