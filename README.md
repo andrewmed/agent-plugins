@@ -10,6 +10,7 @@ This repository is a Claude Code plugin marketplace and a pi package at the same
 | [mail](plugins/mail)             | yes         | no  | Reads two mailboxes over IMAP, saves drafts and trashes messages     |
 | [whatsapp](plugins/whatsapp)     | yes         | yes | Searches WhatsApp chats in a local copy, sends approved drafts       |
 | [telegram](plugins/telegram)     | yes         | yes | Searches Telegram chats, one chat at a time, sends approved drafts   |
+| [messages](plugins/messages)     | yes         | yes | Searches the chats of the macOS Messages app, no Full Disk Access    |
 
 Read the README of a plugin before you install it. A plugin can need its own configuration.
 
@@ -72,7 +73,7 @@ The package gives pi the extensions and the skills in `pi` of the root `package.
 }
 ```
 
-To also load the whatsapp and telegram skills, use `"skills": ["plugins/whatsapp", "plugins/telegram"]`.
+To also load the whatsapp, telegram and messages skills, use `"skills": ["plugins/whatsapp", "plugins/telegram", "plugins/messages"]`.
 
 ### Automatic update
 
