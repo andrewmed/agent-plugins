@@ -22,11 +22,6 @@
       "name": "telegram",
       "source": "./plugins/telegram",
       "description": "Searches and reads the Telegram chats of the user, one chat at a time, and sends a draft only after the user approved it."
-    },
-    {
-      "name": "messages",
-      "source": "./plugins/messages",
-      "description": "Searches and reads the chats of the macOS Messages app (iMessage, SMS, RCS) with no Full Disk Access. It does not send."
     }
   ]
 }

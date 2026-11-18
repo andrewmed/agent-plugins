@@ -22,7 +22,6 @@ A Claude Code plugin marketplace and a pi package. Each plugin is a folder in `p
 - In `plugins/mattermost`: `bun install`, then `bun test dev`.
 - In `plugins/whatsapp`: `npm ci`, then `node --test dev/`. A test with the real WhatsApp needs the phone of the user: do not run `link` with a phone number that is not the user's, because WhatsApp sends a notification to that phone.
 - In `plugins/telegram`: `uv run dev/test_tg.py`. A test with the real Telegram that sends a message needs the approval of the user.
-- In `plugins/messages`: `uv run dev/test_msg.py`. The tests do not read the real Messages database. `plugins/messages/dev/NOTES.md` tells what is not measured there.
 - After a change in `mattermost.ts` or `session.ts`, also run the changed code in Node.
 - For a test with a real Claude Code or a real pi, use `plugins/mattermost/dev/fake-mattermost.ts` and a method from `plugins/mattermost/dev/NOTES.md`. The project folder of the test must not be the folder of a running session.
 - The tests do not use the production Mattermost server. In the report, tell what you did not test there.
