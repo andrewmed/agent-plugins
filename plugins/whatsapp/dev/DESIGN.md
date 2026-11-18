@@ -137,7 +137,7 @@ Run: `node <skill-dir>/wa.ts <command> ...`.
 - `node:sqlite` for the store. It has FTS5 (`dev/NOTES.md`).
 - `@whiskeysockets/baileys` with an exact version. Nothing else. The logger is a small object with no output, so `pino` is not a direct dependency.
 - Baileys loads with `import()` only for a command that connects. `--offline` reads need no `node_modules` and no network.
-- Install: when a read command must sync and `node_modules` is missing in the plugin folder, `wa.ts` runs `npm ci --omit=dev --ignore-scripts --no-audit --no-fund` with the output to stderr. `npm ci` checks the `integrity` hash of each package in `package-lock.json`. Claude Code puts each plugin version in a new folder, so this occurs one time for each version. In pi, see "Pi". `send` never installs.
+- Install: when a read command must sync and `node_modules` is missing in the plugin folder, `wa.ts` runs `npm ci --omit=dev --ignore-scripts --no-audit --no-fund` with the output to stderr. It installs only while it holds the sync lock, so parallel commands do not run `npm ci` at the same time. A command that does not get the lock skips the sync and reads the store. `npm ci` checks the `integrity` hash of each package in `package-lock.json`. Claude Code puts each plugin version in a new folder, so this occurs one time for each version. In pi, see "Pi". `send` never installs.
 - `7.0.0-rc13`, as Hermes. It works in Node 26 (`dev/NOTES.md`). rc13 and rc14 both depend on `whatsapp-rust-bridge` 0.5.4: a prebuilt WebAssembly binary with crypto code, from one maintainer, with no install script. It cannot be examined as source. It is part of the supply-chain risk.
 - Tests: `node --test dev/` in `plugins/whatsapp`.
 
@@ -160,7 +160,7 @@ The user runs `node wa.ts link` in a terminal one time. There are two methods:
 - `link`: the script prints each `qr` string from `connection.update` as a QR code. On the phone: Linked devices, Link a device, scan the code. `qrcode-terminal` makes the code with half blocks (`small: true`), and the script sets the colors of each line to white on black, so a light terminal theme does not invert the code. Baileys rc13 has no renderer: its `printQRInTerminal` only writes a warning. When WhatsApp gives no more codes, Baileys closes the connection with code 408, and the script stops with an error that tells the user to run `link` again.
 - `link --phone <number>`: the script asks for a pairing code (`sock.requestPairingCode`) at the first `qr` and prints it. On the phone: Linked devices, Link with phone number, type the code.
 
-`link` installs the modules also when `node_modules` has no `qrcode-terminal`, because modules from before this dependency can be there.
+`link` installs the modules also when `node_modules` has no `qrcode-terminal`, because modules from before this dependency can be there. It also installs only while it holds the lock.
 
 After the link, WhatsApp closes the connection with code 515. The script connects again one time. Then it stays connected and writes the history sync to the store. It prints the progress from `messaging-history.set` (`progress`, `syncType`). It stops when no history chunk came for 60 s and no chunk downloads, or after 30 minutes. Ctrl+C also stops it, at the end of the history chunk that downloads, as in "Sync". A history chunk that comes later goes into the store at a later sync.
 

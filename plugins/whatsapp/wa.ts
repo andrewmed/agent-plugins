@@ -509,13 +509,13 @@ function recover(db: DatabaseSync) {
 export async function withSync(p: Paths, db: DatabaseSync, offline: boolean, work?: (conn: any) => Promise<any>, connectFn = connect) {
   const run = async (status: string, conn: any = null, needLink = false) => ({ status, needLink, result: await work?.(conn) })
   if (offline) return run('off (--offline)')
-  if (connectFn === connect && !hasModules()) {
-    try { install() } catch (e: any) { return run(`failed (${e.message})`) }
-  }
   const lock = takeLock(p.lock, 0)
   if (!lock) return run('skipped (another call holds the lock)')
   let conn: any = null
   try {
+    if (connectFn === connect && !hasModules()) {
+      try { install() } catch (e: any) { return await run(`failed (${e.message})`) }
+    }
     recover(db)
     try {
       conn = await connectFn(p, db)
@@ -817,12 +817,12 @@ export async function qrRenderer() {
 }
 
 async function linkCommand(p: Paths, db: DatabaseSync, phone?: string) {
-  // Modules from before the QR link do not have the QR module.
-  if (!hasModules() || !fs.existsSync(path.join(HERE, 'node_modules', QR_MODULE))) install()
   const lock = takeLock(p.lock, 0)
   if (!lock) fail('another call holds the lock')
   let conn: any = null
   try {
+    // Modules from before the QR link do not have the QR module.
+    if (!hasModules() || !fs.existsSync(path.join(HERE, 'node_modules', QR_MODULE))) install()
     const render = phone ? null : await qrRenderer()
     let codes = 0
     conn = await connect(p, db, {
