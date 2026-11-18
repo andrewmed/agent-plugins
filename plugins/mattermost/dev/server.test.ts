@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { Bridge, HELP_TEXT, Mailbox, jobStepKind, parseVerdict, terminalCommand } from '../server.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, withLast, type Entry } from '../transcript.ts'
 import { FOLLOW_LIMIT, LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, readFollow, route, safeFileName, sessionName, takeLock, untilStarted, type RouteContext } from '../session.ts'
-import { ApiError, Socket, botUsername, markedSession, provision, sessionMarker, type Post } from '../mattermost.ts'
+import { ApiError, Socket, botUsername, markedSession, provision, sessionKey, sessionMarker, type Post } from '../mattermost.ts'
 import { readState } from '../schedule.ts'
 import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from 'fs'
 import { hostname, tmpdir } from 'os'
@@ -339,11 +339,27 @@ describe('untilStarted', () => {
   })
 })
 
+describe('sessionKey', () => {
+  test('no name gives the folder', () => {
+    expect(sessionKey('/x/ai')).toBe('/x/ai')
+    expect(sessionKey('/x/ai', '')).toBe('/x/ai')
+    expect(sessionKey('/x/ai', '!!')).toBe('/x/ai')
+  })
+  test('a name is added in lowercase with permitted characters', () => expect(sessionKey('/x/ai', 'Code Review')).toBe('/x/ai#code-revie'))
+})
+
 describe('provision', () => {
   const config = { url: 'http://mm', team: 'home', ownerId: 'owner', user: 'provision', password: 'x' }
   const realFetch = globalThis.fetch
   afterEach(() => {
     globalThis.fetch = realFetch
+  })
+
+  const made: any[] = []
+  let taken: string[] = []
+  afterEach(() => {
+    made.length = 0
+    taken = []
   })
 
   function stub(fail: string | undefined, bots: any[]) {
@@ -360,6 +376,11 @@ describe('provision', () => {
       if (path.startsWith('/bots?')) return send(bots)
       if (path.endsWith('/tokens') && init.method === 'POST') return send({ id: 'new', token: 'secret' })
       if (path.includes('/tokens?')) return send([{ id: 'old' }, { id: 'new' }])
+      if (call === 'POST /bots') {
+        const bot = JSON.parse(String(init.body))
+        made.push(bot)
+        return taken.includes(bot.username) ? send({ id: 'taken' }, 400) : send({ ...bot, user_id: 'made' }, 201)
+      }
       if (path === '/channels') return send({ id: 'channel' }, 201)
       if (path.includes('/channels/name/gone-cc')) return send({ id: 'other', creator_id: 'someone' })
       if (path === '/users/owner') return send({ username: 'owner' })
@@ -396,6 +417,32 @@ describe('provision', () => {
     const calls = stub(undefined, [mine, gone])
     await provision(config, 'mac', '/x/ai', project => project === '/no/such/dir', () => {})
     expect(calls).not.toContain('POST /bots/b2/disable')
+  })
+
+  test('a session with a name gets its own bot, and the session with no name keeps its bot', async () => {
+    stub(undefined, [mine])
+    await provision(config, 'mac', '/x/ai', () => false, () => {}, 'claude', 'Review')
+    expect(made).toEqual([{ username: 'ai-review-cc', display_name: 'ai-review · cc', description: sessionMarker('mac', '/x/ai#review') }])
+    made.length = 0
+    await provision(config, 'mac', '/x/ai', () => false, () => {}, 'claude', '')
+    expect(made).toEqual([])
+  })
+
+  test('a taken name with a session name keeps the session name', async () => {
+    stub(undefined, [])
+    taken = ['ai-review-cc']
+    await provision(config, 'mac', '/x/ai', () => false, () => {}, 'claude', 'review')
+    expect(made.map(bot => bot.username)).toEqual(['ai-review-cc', expect.stringMatching(/^ai-review-[0-9a-f]{3}-cc$/)])
+  })
+
+  test('a stopped session with a name is not removed while its folder exists', async () => {
+    const here = import.meta.dir
+    const named = { user_id: 'b5', username: 'dev-review-cc', description: sessionMarker('mac', `${here}#review`), delete_at: 0 }
+    const lost = { user_id: 'b6', username: 'gone-review-cc', description: sessionMarker('mac', '/no/such/dir#review'), delete_at: 0 }
+    const calls = stub(undefined, [mine, named, lost])
+    await provision(config, 'mac', '/x/ai', () => false, () => {})
+    expect(calls).not.toContain('POST /bots/b5/disable')
+    expect(calls).toContain('POST /bots/b6/disable')
   })
 
   test('a bot with the old marker of this host is removed, also when its session is live', async () => {

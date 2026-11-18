@@ -4,7 +4,7 @@ import { homedir, hostname } from 'os'
 import { dirname, isAbsolute, join, relative, sep } from 'path'
 import { setTimeout as sleep } from 'timers/promises'
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
-import type { Config, Post } from './mattermost.ts'
+import { sessionKey, type Config, type Post } from './mattermost.ts'
 import { JOB_COMMAND_RE, JOB_HELP, JOB_TICK_MS, JobSession, tagValue, type CommandResult, type Run } from './jobs.ts'
 import type { StepKind } from './schedule.ts'
 import { RUN_DIR, STATE_DIR, TOOLS, agentNotice, agentRules, attachmentList, attachments, errorText, isLive, quote, readConfig, safeName, takeLock, type Follow, type Lock } from './session.ts'
@@ -147,7 +147,7 @@ export class PiBridge extends JobSession {
   }
 
   async start(config: Config, reason: string): Promise<void> {
-    this.starting = this.open(config, this.ctx.cwd, 'pi', project => isLive(lockKey(project)), () => this.disposed)
+    this.starting = this.open(config, this.ctx.cwd, 'pi', project => isLive(lockKey(project)), () => this.disposed, process.env.MATTERMOST_SESSION)
     await this.starting
     if (this.disposed) {
       this.ws?.stop()
@@ -530,9 +530,10 @@ export default function (pi: ExtensionAPI): void {
       return
     }
     mkdirSync(RUN_DIR, { recursive: true, mode: 0o700 })
-    const lock = await takeLock(lockKey(ctx.cwd))
+    const session = sessionKey(ctx.cwd, process.env.MATTERMOST_SESSION)
+    const lock = await takeLock(lockKey(session))
     if (lock === undefined) {
-      log(`passive: another session has ${ctx.cwd}`)
+      log(`passive: another session has ${session}`)
       return
     }
     registerSessionTools(pi, () => bridge)

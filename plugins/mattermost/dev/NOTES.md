@@ -390,3 +390,21 @@ Passed on the fake server:
 - After `/quit` and a new start, the start post showed `job each 1h, next run <time>`.
 
 Not tested with a real pi: a `/compact` step that succeeds, a prompt step that starts no run, an aborted step, `/stop` and `/start`. The unit tests in `dev/pi.test.ts` have the first three. Not tested on the production server.
+
+## Session name with `MATTERMOST_SESSION`, 2026-11-18
+
+- The session key is `<folder>` with no name and `<folder>#<name>` with a name. The lock, the marker of the bot and `isLive` use this key. The pi lock key is `pi:<folder>#<name>`.
+- The name is in lowercase, has only `a-z`, `0-9`, `_` and `-`, and has a maximum of 10 characters. A name that becomes empty gives the session with no name.
+- The cleanup of gone sessions keeps a bot when the key without `#<name>` is a path that exists.
+- From the code, not measured: a version of the plugin before this change does not have this rule. When it starts on the same host, it disables the bot of a stopped session with a name and deletes its channel. The next start of that session enables the bot and restores the channel.
+
+Method: `dev/fake-mattermost.ts` on the port 18177 and five `bun server.ts` processes with `CLAUDE_CODE_ENTRYPOINT=cli`, the same `CLAUDE_PROJECT_DIR`, `HOME` as an empty folder, and the `MM_*` values in the environment. No `claude` process.
+
+Passed on the fake server:
+
+- The variable not set: `connected as @ai-cc`. Then an empty variable: `passive: another session has <folder>`.
+- `MATTERMOST_SESSION=Review`: `connected as @ai-review-cc`, with the channel `ai-review-cc`. Then `MATTERMOST_SESSION=review`: `passive: another session has <folder>#review`.
+- `MATTERMOST_SESSION=fix`: `connected as @ai-fix-cc`. The three bots and the three channels stayed.
+- In Node 26, from `bun build --target=node`: `provision` with the harness `pi` gave `ai-pi` and `ai-review-pi`, a second `takeLock` of each key gave no lock, and a later `provision` with no name did not disable `ai-review-pi`.
+
+Not tested: a real Claude Code or a real pi with the variable, a post to a session with a name, a job in a session with a name, Linux. Not tested on the production server.

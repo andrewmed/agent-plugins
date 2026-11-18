@@ -353,9 +353,10 @@ export abstract class Session {
     harness: Harness,
     live: (project: string) => boolean | Promise<boolean>,
     stopped: () => boolean = () => false,
+    name = '',
   ): Promise<void> {
     this.config = config
-    this.id = await untilStarted(() => provision(config, hostname(), project, live, this.log, harness), this.log, stopped)
+    this.id = await untilStarted(() => provision(config, hostname(), project, live, this.log, harness, name), this.log, stopped)
     this.api = new Client(config.url, this.id.botToken)
     this.ws = new Socket(config.url, this.id.botToken, event => this.onEvent(event), this.log)
     this.ws.start()

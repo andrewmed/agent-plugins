@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { mkdirSync, readdirSync, rmSync } from 'fs'
 import { hostname } from 'os'
 import { basename, join } from 'path'
-import { type Config, type Post, type WsEvent } from './mattermost.ts'
+import { sessionKey, type Config, type Post, type WsEvent } from './mattermost.ts'
 import { HELP_RE, JOB_COMMAND_RE, JOB_HELP, JOB_TICK_MS, JobSession, commandText, tagValue, type CommandResult, type Run } from './jobs.ts'
 import { type StepKind } from './schedule.ts'
 import { RUN_DIR, TOOLS, agentNotice, agentRules, attachments, errorText, isLive, quote, readConfig, safeName, takeLock, type Follow, type Lock } from './session.ts'
@@ -165,8 +165,8 @@ export class Bridge extends JobSession {
     if (known) this.turn = undefined
   }
 
-  async connect(config: Config, project: string): Promise<void> {
-    await this.open(config, project, 'claude', isLive)
+  async connect(config: Config, project: string, name = ''): Promise<void> {
+    await this.open(config, project, 'claude', isLive, undefined, name)
     this.startPost = { text: `:large_green_circle: Session started on \`${hostname()}\` in \`${project}\`` }
     this.showStart()
     this.loadJob()
@@ -620,9 +620,11 @@ async function main(): Promise<void> {
   }
   const project = process.env.CLAUDE_PROJECT_DIR ?? process.cwd()
   mkdirSync(RUN_DIR, { recursive: true, mode: 0o700 })
-  lock = await takeLock(project)
+  const name = process.env.MATTERMOST_SESSION
+  const session = sessionKey(project, name)
+  lock = await takeLock(session)
   if (!lock) {
-    log(`passive: another session has ${project}`)
+    log(`passive: another session has ${session}`)
     return
   }
   removeDeadSockets()
@@ -630,7 +632,7 @@ async function main(): Promise<void> {
   rmSync(socketPath, { force: true })
   serveHooks(socketPath, bridge)
   try {
-    await bridge.connect(config, project)
+    await bridge.connect(config, project, name)
   } catch (err) {
     log(`passive: start failed: ${errorText(err)}`)
     bridge.mailbox.close()

@@ -206,6 +206,20 @@ export function botUsername(project: string, suffix = '', harness: Harness = 'cl
   return `${name || 'agent'}${tail}`
 }
 
+export function sessionLabel(name = ''): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^[-_]+/, '')
+    .slice(0, 10)
+    .replace(/[-_]+$/, '')
+}
+
+export function sessionKey(project: string, name = ''): string {
+  const label = sessionLabel(name)
+  return label ? `${project}#${label}` : project
+}
+
 function markerPrefix(host: string, harness: Harness): string {
   return `mm-agent-${NAME_SUFFIX[harness]} host=${host} session=`
 }
@@ -242,7 +256,8 @@ async function removeGoneSessions(
     // Migration of 2026-11-10 from the suffix -claude to -cc: removes the bots that have the marker without a suffix.
     // Delete `old` when no session of the old version runs.
     const old = harness === 'claude' && !bot.delete_at && String(bot.description ?? '').startsWith(`mm-agent host=${host} session=`)
-    if (!old && (!session || bot.delete_at || existsSync(session) || (await isLive(session)))) continue
+    const folder = session?.replace(/#[a-z0-9_-]+$/, '')
+    if (!old && (!session || bot.delete_at || existsSync(session) || existsSync(folder!) || (await isLive(session)))) continue
     try {
       const channel = await admin.api('GET', `/teams/${teamId}/channels/name/${bot.username}`).catch(() => undefined)
       if (channel?.creator_id === bot.user_id) await admin.api('DELETE', `/channels/${channel.id}`)
@@ -254,21 +269,21 @@ async function removeGoneSessions(
   }
 }
 
-async function findOrCreateBot(admin: Client, bots: any[], project: string, marker: string, harness: Harness): Promise<any> {
+async function findOrCreateBot(admin: Client, bots: any[], project: string, name: string, marker: string, harness: Harness): Promise<any> {
   const found = bots.find(bot => bot.description === marker)
   if (found) {
     if (found.delete_at) await admin.api('POST', `/bots/${found.user_id}/enable`)
     return found
   }
   const hash = createHash('sha256').update(marker).digest('hex').slice(0, 3)
-  for (const suffix of ['', hash]) {
+  for (const suffix of [name, name ? `${name}-${hash}` : hash]) {
     const username = botUsername(project, suffix, harness)
     const label = NAME_SUFFIX[harness]
     const display_name = `${username.slice(0, -label.length - 1)} · ${label}`
     try {
       return await admin.api('POST', '/bots', { username, display_name, description: marker })
     } catch (err) {
-      if (!(err instanceof ApiError) || err.status >= 500 || suffix) throw err
+      if (!(err instanceof ApiError) || err.status >= 500 || suffix !== name) throw err
     }
   }
 }
@@ -299,6 +314,7 @@ export async function provision(
   isLive: (project: string) => boolean | Promise<boolean>,
   log: (line: string) => void,
   harness: Harness = 'claude',
+  name = '',
 ): Promise<Identity> {
   const admin = new Client(config.url)
   await admin.login(config.user, config.password)
@@ -307,7 +323,7 @@ export async function provision(
     const teamId: string = team.id
     const bots = await listBots(admin)
     await removeGoneSessions(admin, teamId, bots, host, isLive, log, harness)
-    const bot = await findOrCreateBot(admin, bots, project, sessionMarker(host, project, harness), harness)
+    const bot = await findOrCreateBot(admin, bots, project, sessionLabel(name), sessionMarker(host, sessionKey(project, name), harness), harness)
     const made = await admin.api('POST', `/users/${bot.user_id}/tokens`, { description: 'mattermost-agents session' })
     const old = await admin.api<any[]>('GET', `/users/${bot.user_id}/tokens?per_page=200`)
     await admin.api('POST', `/teams/${teamId}/members`, { team_id: teamId, user_id: bot.user_id })
