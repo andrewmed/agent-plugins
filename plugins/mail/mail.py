@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read iCloud and Gmail mail over IMAP, save drafts and trash messages. Addresses come from environment variables and passwords from ~/.config/mail/.env."""
+"""Read iCloud and Gmail mail over IMAP, save drafts and trash messages. Addresses come from environment variables, and passwords from ~/.config/mail/.env or from environment variables."""
 
 import argparse
 import contextlib
@@ -51,19 +51,18 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
 
 
 def secret(name):
-    """The passwords are in a file and not in the environment, where each process of the user gets them."""
-    try:
-        lines = SECRETS.read_text().splitlines()
-    except OSError as err:
-        sys.exit(f"cannot read {SECRETS}: {err.strerror}")
-    for line in lines:
-        key, _, value = line.partition("=")
-        value = value.strip()
-        if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
-        if key.strip() == name and value:
-            return value
-    sys.exit(f"{SECRETS} has no value for {name}")
+    """The file comes first, because each process of the user gets a password that is in the environment."""
+    with contextlib.suppress(OSError):
+        for line in SECRETS.read_text().splitlines():
+            key, _, value = line.partition("=")
+            value = value.strip()
+            if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            if key.strip() == name and value:
+                return value
+    if os.environ.get(name):
+        return os.environ[name]
+    sys.exit(f"{name} has no value in {SECRETS} and is not set in the environment")
 
 
 def connect(account):

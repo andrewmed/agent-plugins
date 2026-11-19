@@ -14,7 +14,7 @@ A Claude Code plugin with one skill. The skill reads two mailboxes over IMAP, sa
 
 Set the variables in the environment that starts `claude`.
 
-`mail.py` reads the passwords from the file `~/.config/mail/.env`. Give the file the mode 600. Do not set the passwords in the environment, where each process of the user gets them.
+`mail.py` reads the passwords from the file `~/.config/mail/.env`. Give the file the mode 600. If the file is absent or does not have a key, `mail.py` reads the environment variable with the same name. Each process of the user gets a password that is in the environment, thus the file is the safer place.
 
 | Key                    | Value                                          |
 | ---------------------- | ---------------------------------------------- |
