@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { join } from 'path'
 import { ApiError, type Post } from './mattermost.ts'
 import { firstDue, hasClock, isLate, localZone, nextAt, normalizeTriggers, parseJob, readState, rezone, scheduleText, settle, timeText, userZone, writeState, type Job, type JobState, type Schedule, type Step, type StepKind } from './schedule.ts'
-import { LOOP_LIMIT, STATE_DIR, Session, errorText, isNormalPost } from './session.ts'
+import { LOOP_LIMIT, STATE_DIR, Session, errorText, isNormalPost, preview } from './session.ts'
 
 export const JOB_COMMAND_RE = /^\/(every|job|stop|start|drop)(?=\s|$)/
 export const JOB_TICK_MS = 30_000
@@ -17,7 +17,6 @@ export const JOB_HELP = [
 ].join('\n')
 const QUIET_MS = 300_000
 const PROMPT_START_MS = 30_000
-const STEP_PREVIEW_CHARS = 100
 const CAUSE_CHARS = 300
 
 export function commandText(command: string, output: string): string {
@@ -34,9 +33,7 @@ function jobText(schedule: Schedule, steps: number): string {
 }
 
 function stepText(step: Step): string {
-  if ('command' in step) return `\`${step.command}\``
-  const line = step.prompt.split('\n')[0]!
-  return line.length < step.prompt.length || line.length > STEP_PREVIEW_CHARS ? `${line.slice(0, STEP_PREVIEW_CHARS)}…` : line
+  return 'command' in step ? `\`${step.command}\`` : preview(step.prompt)
 }
 
 // The prompt that asks the model of the session for the schedule. It has line 1 of the job post and not the steps.
@@ -206,18 +203,21 @@ export abstract class JobSession extends Session {
 
   // The owner can change the job post while the session is stopped, so the start reads it.
   private async showJobAtStart(state: JobState): Promise<void> {
-    this.applyRead(state, await this.readJob(state))
+    const read = await this.readJob(state)
+    this.applyRead(state, read)
     if (state !== this.job) return
     const schedule = state.schedule
-    const condition = state.paused ? 'stopped' : schedule ? `next run ${timeText(nextAt(schedule), schedule.zone)}` : 'the model reads the schedule'
-    this.jobNote = `, job${schedule ? ` ${scheduleText(schedule.triggers)}` : ''}, ${condition}`
+    const job = 'failure' in read ? undefined : read.job
+    const parts = [schedule ? scheduleText(schedule.triggers) : job && `\`${job.text}\``, job && stepCount(job.steps.length)].filter(Boolean)
+    const condition = state.paused ? 'Stopped' : schedule ? `Next run: ${timeText(nextAt(schedule), schedule.zone)}` : 'The model reads the schedule'
+    this.jobNote = `\n:alarm_clock: Job${parts.length ? `: ${parts.join(', ')}` : ''}. ${condition}`
     this.showStart()
   }
 
   protected showStart(): void {
     const start = this.startPost
     if (!start) return
-    const message = `${start.text}${this.model ? `, model \`${this.model}\`` : ''}${this.jobNote}`
+    const message = `${start.text}${this.model ? `, model \`${this.model}\`` : ''}${this.jobNote}${this.followLine()}`
     this.enqueue(async () => {
       if (!start.postId) start.postId = (await this.post(this.id!.channelId, message))?.id
       else await this.api!.api('PUT', `/posts/${start.postId}/patch`, { message })

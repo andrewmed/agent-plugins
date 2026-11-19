@@ -10,6 +10,7 @@ import { writeState } from './schedule.ts'
 export const MAX_POST = 16000
 export const LOOP_LIMIT = 100
 export const FOLLOW_LIMIT = 20
+export const PREVIEW_CHARS = 100
 const HOUR_MS = 3_600_000
 const O_EXLOCK = 0x20
 export const STATE_DIR = join(homedir(), '.config', 'mattermost-agents')
@@ -198,6 +199,16 @@ export function readConfig(path = join(STATE_DIR, '.env'), env: Record<string, s
   const password = value('MM_PROVISION_PASSWORD')
   if (!url || !team || !ownerId || !user || !password) return undefined
   return { url: url.replace(/\/+$/, ''), team, ownerId, user, password }
+}
+
+// Line 1 of a text, cut at PREVIEW_CHARS.
+export function preview(text: string): string {
+  const line = text.split('\n')[0]!
+  return line.length < text.length || line.length > PREVIEW_CHARS ? `${line.slice(0, PREVIEW_CHARS)}…` : line
+}
+
+function followNames(follow: Follow): string {
+  return follow.from.map(name => (name === 'all' ? 'all sessions' : `@${name}`)).join(', ')
 }
 
 export function readFollow(path: string): Follow | undefined {
@@ -534,17 +545,22 @@ export abstract class Session {
     await this.fromAgent(post, this.follow)
   }
 
-  // The harness calls this after its start post, so the follow post comes after it.
+  // The harness calls this before its start post, which gets the follow line.
   protected loadFollow(): void {
     this.followPath ??= join(STATE_DIR, 'follows', `${this.id!.botId}.json`)
     this.follow = readFollow(this.followPath)
-    if (this.follow) this.showFollow()
+  }
+
+  // The start post has only line 1 of the purpose. The post after a follow call has the full purpose.
+  protected followLine(): string {
+    const follow = this.follow
+    return follow ? `\n:eyes: Follows ${followNames(follow)}${follow.report ? ', with report' : ''}: ${preview(follow.purpose)}` : ''
   }
 
   private showFollow(): void {
     const follow = this.follow
     const text = follow
-      ? `:eyes: This session follows the new posts of ${follow.from.map(name => (name === 'all' ? 'all sessions' : `@${name}`)).join(', ')} in ~agents.${follow.report ? ' The last text of each turn from a followed post mentions the owner.' : ''} Purpose: ${follow.purpose}`
+      ? `:eyes: This session follows the new posts of ${followNames(follow)} in ~agents.${follow.report ? ' The last text of each turn from a followed post mentions the owner.' : ''} Purpose: ${follow.purpose}`
       : ':eyes: This session follows no session.'
     this.enqueue(() => this.post(this.id!.channelId, text))
   }

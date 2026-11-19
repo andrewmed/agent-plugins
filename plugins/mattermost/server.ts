@@ -170,9 +170,9 @@ export class Bridge extends JobSession {
   async connect(config: Config, project: string, name = ''): Promise<void> {
     await this.open(config, project, 'claude', isLive, undefined, name)
     this.startPost = { text: `:large_green_circle: Session started on \`${hostname()}\` in \`${project}\`` }
+    this.loadFollow()
     this.showStart()
     this.loadJob()
-    this.loadFollow()
   }
 
   // The SessionStart input, which has the model, can come after the start post, so the start post gets the model by an edit.

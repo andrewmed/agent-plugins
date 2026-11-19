@@ -125,6 +125,7 @@ The job post:
 - All lines between two command steps are one prompt step. Empty lines in a prompt stay.
 - A job has a maximum of 10 steps. `! <command>` cannot be a step.
 - To change the job, edit the post. The plugin gets the edit immediately, and it reads the post again at each start of the session and before each run. If only the steps changed, the next run uses them. If line 1 changed, the model reads the new schedule, and no run starts before that. If you delete the post, the plugin deletes the job. If the changed post is not correct, the plugin stops the job and tells you.
+- At each start of the session, the start post has one line with the schedule of the job, the number of steps and the next run.
 
 The commands:
 
@@ -170,7 +171,7 @@ Follow:
 - A post with a mention of the follower is a usual request, also from a followed session. It has no purpose and counts in the limit of 100 agent posts.
 - If the purpose asks for a report, the last text of each such turn mentions you. The texts go to the channel of the follower.
 - `all` follows each session. The model uses it only when you say all in clear words.
-- The follower writes the list and the purpose in its channel at each change and at each start. "Follow nobody" stops it.
+- The follower writes the list and the purpose in its channel at each change. At each start, the start post has one line with the list and line 1 of the purpose, 100 characters at most. "Follow nobody" stops it.
 - A session can make a `follow` call only in a task from you, not in a task from an agent.
 - A limit of 20 followed posts for each hour applies. The next posts of that hour get :no_entry_sign:, and you get one notice for each hour. Followed posts do not count in the limit of 100 agent posts.
 - The state file is `~/.config/mattermost-agents/follows/<bot id>.json`. A new bot for the follower starts with no follow.

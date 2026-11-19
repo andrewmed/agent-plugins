@@ -1006,6 +1006,15 @@ describe('Bridge', () => {
       expect(calls).toEqual([`POST /posts :large_green_circle: Session started on \`${hostname()}\` in \`/x\`, model \`m\``])
     })
 
+    test('a follow from the state file is in the start post, with no second post', async () => {
+      const { bridge, calls } = startBridge()
+      bridge.followPath = join(mkdtempSync(join(tmpdir(), 'mm-follow-')), 'bot.json')
+      writeFileSync(bridge.followPath, JSON.stringify({ from: ['b-cc'], purpose: 'p', report: true }))
+      await bridge.connect({}, '/x')
+      await bridge.out
+      expect(calls).toEqual([`POST /posts :large_green_circle: Session started on \`${hostname()}\` in \`/x\`\n:eyes: Follows @b-cc, with report: p`])
+    })
+
     test('the model comes by an edit, and later values change nothing', async () => {
       const { bridge, calls } = startBridge()
       await bridge.connect({}, '/x')
@@ -2184,18 +2193,38 @@ describe('job', () => {
 
     test('shows the job', async () => {
       const { calls, sent } = await started(() => {})
-      expect(calls).toEqual(['POST /posts Session started', 'PUT /posts/start/patch Session started, job each 30m, next run 2026-01-02 03:34 UTC'])
+      expect(calls).toEqual(['POST /posts Session started', 'PUT /posts/start/patch Session started\n:alarm_clock: Job: each 30m, 1 step. Next run: 2026-01-02 03:34 UTC'])
       expect(sent).toEqual([])
+    })
+
+    test('the job line comes before the follow line', async () => {
+      const { bridge, calls } = await started(() => {})
+      bridge.follow = { from: ['b-cc'], purpose: 'p', report: false }
+      bridge.showStart()
+      await bridge.out
+      expect(calls.at(-1)).toBe('PUT /posts/start/patch Session started\n:alarm_clock: Job: each 30m, 1 step. Next run: 2026-01-02 03:34 UTC\n:eyes: Follows @b-cc: p')
+    })
+
+    test('shows a job with a post that Mattermost did not give', async () => {
+      const { bridge, calls } = await started(() => {})
+      const api = bridge.api.api
+      bridge.api.api = async (method: string, url: string, body: any) => {
+        if (method === 'GET') throw new Error('down')
+        return api(method, url, body)
+      }
+      await bridge.showJobAtStart(bridge.job)
+      await bridge.out
+      expect(calls.at(-1)).toBe('PUT /posts/start/patch Session started\n:alarm_clock: Job: each 30m. Next run: 2026-01-02 03:34 UTC')
     })
 
     test('shows a stopped job', async () => {
       const { calls } = await started(first => (first.bridge.job.paused = true))
-      expect(calls.at(-1)).toBe('PUT /posts/start/patch Session started, job each 30m, stopped')
+      expect(calls.at(-1)).toBe('PUT /posts/start/patch Session started\n:alarm_clock: Job: each 30m, 1 step. Stopped')
     })
 
     test('a line 1 that changed while the session was stopped goes to the model', async () => {
       const { bridge, calls, sent } = await started(first => first.posts.set('j1', { ...first.posts.get('j1'), message: '/every day at 9\ndo it', edit_at: 9 }))
-      expect(calls.at(-1)).toBe('PUT /posts/start/patch Session started, job, the model reads the schedule')
+      expect(calls.at(-1)).toBe('PUT /posts/start/patch Session started\n:alarm_clock: Job: `day at 9`, 1 step. The model reads the schedule')
       expect(bridge.job.schedule).toBeUndefined()
       expect(sent).toHaveLength(1)
       expect(sent[0].params.content).toContain('\nday at 9\n')
@@ -2470,19 +2499,32 @@ describe('channel agents and follow', () => {
     expect(notes[3]!.message).toBe(':eyes: This session follows no session.')
   })
 
-  test('the follow list and its post come back at the start', async () => {
+  test('the follow list comes back at the start, in the start post', async () => {
     const { bridge, posted } = agentsBridge()
+    bridge.startPost = { text: 'Session started' }
     bridge.loadFollow()
+    bridge.showStart()
     expect(bridge.follow).toBeUndefined()
     await bridge.callTool('follow', { from: ['b-cc'], purpose: 'p' })
     const next = agentsBridge()
     next.bridge.followPath = bridge.followPath
+    next.bridge.startPost = { text: 'Session started' }
     next.bridge.loadFollow()
+    next.bridge.showStart()
     expect(next.bridge.follow).toEqual({ from: ['b-cc'], purpose: 'p', report: false })
     await next.bridge.out
-    expect(next.posted).toEqual([{ channel: 'c', message: ':eyes: This session follows the new posts of @b-cc in ~agents. Purpose: p', root: '' }])
+    expect(next.posted).toEqual([{ channel: 'c', message: 'Session started\n:eyes: Follows @b-cc: p', root: '' }])
     await bridge.out
-    expect(posted).toHaveLength(1)
+    expect(posted.map(entry => entry.message)).toEqual(['Session started', ':eyes: This session follows the new posts of @b-cc in ~agents. Purpose: p'])
+  })
+
+  test('the start post has only line 1 of the purpose, 100 characters at most', async () => {
+    const { bridge, posted } = agentsBridge()
+    bridge.startPost = { text: 'Session started' }
+    bridge.follow = { from: ['all'], purpose: `${'x'.repeat(120)}\nline 2`, report: true }
+    bridge.showStart()
+    await bridge.out
+    expect(posted[0]!.message).toBe(`Session started\n:eyes: Follows all sessions, with report: ${'x'.repeat(100)}…`)
   })
 
   test('a new post of a followed session in agents starts a turn with the purpose, with no mention', async () => {

@@ -162,9 +162,9 @@ export class PiBridge extends JobSession {
     this.jobTimer.unref()
     const model = this.ctx.model ? `, model \`${fullName(this.ctx.model)}\`` : ''
     this.startPost = { text: `:large_green_circle: ${START_NOTICES[reason] ?? 'Session started'} on \`${hostname()}\` in \`${this.ctx.cwd}\`${model}` }
+    this.loadFollow()
     this.showStart()
     this.loadJob()
-    this.loadFollow()
   }
 
   async stop(quit: boolean): Promise<void> {
