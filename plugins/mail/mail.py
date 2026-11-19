@@ -192,22 +192,16 @@ def new_mail(conn, name):
 
 def fetch_message(conn, folder, uid):
     check(*conn.select(folder, readonly=True), f"select {folder}")
-    msg = fetch_selected(conn, uid)
-    if msg is None:
+    raw = fetch_raw(conn, uid)
+    if raw is None:
         sys.exit(f"no message with uid {uid} in {folder}")
-    return msg
+    return email.message_from_bytes(raw, policy=email.policy.default)
 
 
 def fetch_raw(conn, uid):
     """The bytes of the message with this UID in the selected folder, or None."""
     data = check(*conn.uid("FETCH", uid, "(BODY.PEEK[])"), "fetch")
     return next((part[1] for part in data if isinstance(part, tuple)), None)
-
-
-def fetch_selected(conn, uid):
-    """The message with this UID in the selected folder, or None."""
-    raw = fetch_raw(conn, uid)
-    return None if raw is None else email.message_from_bytes(raw, policy=email.policy.default)
 
 
 def uid_arg(value):
