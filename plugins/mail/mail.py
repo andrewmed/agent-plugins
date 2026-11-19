@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read iCloud and Gmail mail over IMAP, save drafts and trash messages. Addresses and passwords come from environment variables."""
+"""Read iCloud and Gmail mail over IMAP, save drafts and trash messages. Addresses come from environment variables and passwords from ~/.config/mail/.env."""
 
 import argparse
 import contextlib
@@ -39,6 +39,7 @@ ACCOUNTS = {
     },
 }
 STATE = pathlib.Path.home() / ".local/state/mail/state.json"
+SECRETS = pathlib.Path.home() / ".config/mail/.env"
 # The default 78-column folder turns a long ASCII Message-ID in In-Reply-To
 # into an encoded word, which mail clients do not decode, so threading breaks.
 # RFC 5322 allows 998 columns.
@@ -49,12 +50,27 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
+def secret(name):
+    """The passwords are in a file and not in the environment, where each process of the user gets them."""
+    try:
+        lines = SECRETS.read_text().splitlines()
+    except OSError as err:
+        sys.exit(f"cannot read {SECRETS}: {err.strerror}")
+    for line in lines:
+        key, _, value = line.partition("=")
+        value = value.strip()
+        if len(value) > 1 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key.strip() == name and value:
+            return value
+    sys.exit(f"{SECRETS} has no value for {name}")
+
+
 def connect(account):
-    for key in ("address", "password"):
-        if not os.environ.get(account[key]):
-            sys.exit(f"the environment variable {account[key]} is not set")
+    if not os.environ.get(account["address"]):
+        sys.exit(f"the environment variable {account['address']} is not set")
     account["address"] = os.environ[account["address"]]
-    password = os.environ[account["password"]]
+    password = secret(account["password"])
     conn = imaplib.IMAP4_SSL(account["host"])
     conn.login(account["address"], password)
     return conn

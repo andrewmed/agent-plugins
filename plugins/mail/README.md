@@ -4,17 +4,22 @@ A Claude Code plugin with one skill. The skill reads two mailboxes over IMAP, sa
 
 ## Configuration
 
-`mail.py` reads the addresses and the passwords from environment variables.
+`mail.py` reads the addresses from environment variables.
 
-| Variable               | Value                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------ |
-| `MAIL_ICLOUD_ADDRESS`  | The login address of the iCloud account                                        |
-| `MAIL_ICLOUD_PASSWORD` | An app-specific password of the iCloud account                                 |
-| `MAIL_ICLOUD_DOMAIN`   | Optional. A custom domain whose addresses are aliases of the iCloud account    |
-| `MAIL_GMAIL_ADDRESS`   | The address of the Gmail account                                               |
-| `MAIL_GMAIL_PASSWORD`  | An app password of the Gmail account                                           |
+| Variable              | Value                                                                       |
+| --------------------- | --------------------------------------------------------------------------- |
+| `MAIL_ICLOUD_ADDRESS` | The login address of the iCloud account                                     |
+| `MAIL_ICLOUD_DOMAIN`  | Optional. A custom domain whose addresses are aliases of the iCloud account |
+| `MAIL_GMAIL_ADDRESS`  | The address of the Gmail account                                            |
 
 Set the variables in the environment that starts `claude`.
+
+`mail.py` reads the passwords from the file `~/.config/mail/.env`. Give the file the mode 600. Do not set the passwords in the environment, where each process of the user gets them.
+
+| Key                    | Value                                          |
+| ---------------------- | ---------------------------------------------- |
+| `MAIL_ICLOUD_PASSWORD` | An app-specific password of the iCloud account |
+| `MAIL_GMAIL_PASSWORD`  | An app password of the Gmail account           |
 
 `mail.py` opens TLS connections to `imap.mail.me.com` and `imap.gmail.com`. If the sandbox of Claude Code is on, allow these hosts or exclude the command from the sandbox.
 
