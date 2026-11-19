@@ -310,6 +310,30 @@ export const TOOLS = [
       required: ['file_id'],
     },
   },
+  {
+    name: 'schedule',
+    description: 'Give the schedule of the job of this session to the plugin. Use it only when a job message asks for the schedule, with the request_id of that message.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        request_id: { type: 'string', description: 'From the message that asks for the schedule' },
+        triggers: {
+          type: 'array',
+          description: 'The job runs at each time that one of the triggers gives',
+          items: {
+            type: 'object',
+            properties: {
+              every: { type: 'string', description: 'An interval: a number and a unit m, h or d. Examples: 30m, 48h, 1d. Not together with times or days' },
+              times: { type: 'array', items: { type: 'string' }, description: 'Times of the day as HH:MM of 24 hours, in the time zone of the owner' },
+              days: { type: 'array', items: { type: 'string', enum: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] }, description: 'The days of the week of the times. Default: each day' },
+            },
+          },
+        },
+        error: { type: 'string', description: 'The cause, when the text is not a clear schedule. Then give no triggers' },
+      },
+      required: ['request_id'],
+    },
+  },
 ]
 
 export abstract class Session {
@@ -346,6 +370,8 @@ export abstract class Session {
   protected abstract taskFromAgent(): boolean
 
   protected async onReaction(_event: WsEvent): Promise<void> {}
+
+  protected async onPostEdited(_post: Post): Promise<void> {}
 
   protected async open(
     config: Config,
@@ -442,9 +468,11 @@ export abstract class Session {
         ? () => this.onPosted(event)
         : event.event === 'reaction_added'
           ? () => this.onReaction(event)
-          : since !== undefined
-            ? () => this.pullMissed(since)
-            : undefined
+          : event.event === 'post_edited'
+            ? () => this.onPostEdited(JSON.parse(event.data.post))
+            : since !== undefined
+              ? () => this.pullMissed(since)
+              : undefined
     if (!work) return
     this.inbound = this.inbound.then(work).catch(err => this.log(`event handling failed: ${errorText(err)}`))
   }

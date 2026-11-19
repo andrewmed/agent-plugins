@@ -246,7 +246,7 @@ describe('commands', () => {
     expect(messages()[0]).toContain('- Skills: `/state`\n')
     expect(messages()[0]).toContain('- Prompt templates: `/review`\n')
     expect(messages()[0]).toContain('- Extension commands: none')
-    expect(messages()[0]).toContain('`/every <interval>`')
+    expect(messages()[0]).toContain('`/every <schedule>`')
   })
   test('/thinking and /effort set the level', async () => {
     const { bridge, messages } = setup()
@@ -393,11 +393,25 @@ describe('job', () => {
       await bridge.out
     }
     const due = async () => {
-      bridge.job.nextAt = Date.now() - 1
+      bridge.job.schedule.due = bridge.job.schedule.due.map(() => Date.now() - 1)
       await bridge.jobTick()
     }
     const start = (prompt: string) => bridge.beforeStart({ messageType: 'user', prompt })
-    return { ...env, owner, due, start, ready: () => owner('job', message) }
+    // The run of the model for the request for a schedule: it calls the tool with args.
+    const answer = async (args: object) => {
+      const request = env.sent.pop()!
+      start(request.text)
+      bridge.runStarted()
+      await bridge.callTool('schedule', { request_id: bridge.run.id, ...args })
+      bridge.runSettled()
+      await bridge.out
+    }
+    // The job post, and the model that reads its schedule. Then sent has only the prompts of the steps.
+    const ready = async () => {
+      await owner('job', message)
+      if (bridge.run) await answer({ triggers: [{ every: /^\/every (\S+)/.exec(message)![1] }] })
+    }
+    return { ...env, owner, due, start, answer, ready }
   }
 
   test('piStepKind accepts only /compact and refuses the other commands', () => {
@@ -411,6 +425,36 @@ describe('job', () => {
     await ready()
     expect(bridge.job).toBeUndefined()
     expect(messages()[0]).toContain('`/new` cannot be a step of a job')
+  })
+
+  test('the model gets line 1 of the job post and sets the schedule with the tool of the extension', async () => {
+    const { bridge, sent, messages, posted, owner, answer } = jobSetup('')
+    await owner('job', '/every day at 14:00 and every 2 hours\nSay hi.')
+    expect(sent).toHaveLength(1)
+    expect(sent[0].text).toContain('job="run"')
+    expect(sent[0].text).toContain('\nday at 14:00 and every 2 hours\n')
+    expect(sent[0].text).toContain(`the Mattermost tool \`mattermost_schedule\` one time with the request_id "${bridge.run.id}"`)
+    expect(sent[0].text).not.toContain('Say hi.')
+    expect(messages()).toEqual([])
+    await answer({ triggers: [{ times: ['14:00'] }, { every: '2h' }] })
+    expect(posted.map(entry => entry.root_id)).toEqual(['job'])
+    expect(messages()[0]).toContain(':alarm_clock: Job: each day at 14:00; each 2h (')
+    expect(bridge.job.schedule.triggers).toEqual([{ days: [], times: ['14:00'] }, { every: '2h' }])
+    expect(bridge.run).toBeUndefined()
+    expect(bridge.mailbox.busy).toBe(false)
+  })
+
+  test('a model that does not call the tool stops the job', async () => {
+    const { bridge, sent, messages, owner, start } = jobSetup('')
+    await owner('job', '/every now and then\nSay hi.')
+    start(sent[0].text)
+    bridge.runStarted()
+    bridge.messageEnded(text('I do not know.'))
+    bridge.runSettled()
+    await bridge.out
+    expect(messages()).toEqual(['I do not know.', expect.stringContaining('@owner :warning: The job is stopped: the model did not give the schedule.')])
+    expect(bridge.job.paused).toBe(true)
+    expect(bridge.run).toBeUndefined()
   })
 
   test('a run sends the steps one after the other, and the texts go to the thread with no mention', async () => {

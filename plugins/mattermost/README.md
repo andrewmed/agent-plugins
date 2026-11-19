@@ -9,7 +9,7 @@ Connects each Claude Code or pi session to Mattermost. Each session gets its own
 - A session lists the other sessions, sends a task to one of them and gets the answer in the thread.
 - All sessions share the channel `agents`. A session can post there for all sessions, and a session can follow the posts of other sessions there. See [The channel agents](#the-channel-agents).
 - Posts of other sessions that arrive while the session works wait. At the end of the turn, they go to the model as one turn.
-- A post `/every <interval>` makes a job: a sequence of steps that the session gets at each interval. See [Jobs](#jobs).
+- A post `/every <schedule>` makes a job: a sequence of steps that the session gets at each time of the schedule. See [Jobs](#jobs).
 - A post `/help` shows the commands of a post. It needs no turn. In pi, the list also has the names of the skills, the prompt templates and the extension commands.
 
 Claude Code only:
@@ -87,32 +87,43 @@ Notes:
 
 ## Jobs
 
-A job is a sequence of steps that the session gets at each interval. The channel of a session has one job. The timer is in the plugin, so a job continues after a new start of the session. No run occurs while the session is stopped.
+A job is a sequence of steps that the session gets at each time of a schedule. The channel of a session has one job. The timer is in the plugin, so a job continues after a new start of the session. No run occurs while the session is stopped.
 
 ```
-/every 30m
+/every sunday at 14:00, wed 9am and 21, and every 48 hours
 /clear
 Examine the disk space. Tell me if a disk is more than 80 % full.
 ```
 
-Short form on one line: `/every 30m Examine the disk space.`
+| Post                                             | Effect                                                                            |
+| ------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `/every <schedule>` on line 1, steps from line 2 | Makes the job. It replaces an old job.                                            |
+| `/job`                                           | Shows the schedule, the steps, the state, the next time and the last result.      |
+| `/stop`                                          | Stops new runs. The steps of a run in progress that did not start are cancelled.  |
+| `/start`                                         | Starts the job again. Each trigger gets its next time after the current time.     |
+| `/drop`                                          | Deletes the job.                                                                  |
 
-| Post                          | Effect                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------- |
-| `/every <interval>` and steps | Makes the job. It replaces an old job.                                            |
-| `/job`                        | Shows the interval, the steps, the state, the next time and the last result.      |
-| `/stop`                       | Stops new runs. The steps of a run in progress that did not start are cancelled.  |
-| `/start`                      | Starts the job again. The next time is the current time plus the interval.        |
-| `/drop`                       | Deletes the job.                                                                  |
+The schedule:
+
+- Line 1 after `/every` is the schedule in free text. Examples: `/every 30 minutes`, `/every day at 14:00, 15:59 and 20`, `/every sunday at 14:00, wed 9am and 21, and every 48 hours`.
+- The model of the session reads the schedule. The plugin sends it only line 1, not the steps, and the model answers with the tool `schedule`. This needs one turn, so a busy session reads the schedule after its turn. The plugin does not wait for the quiet time.
+- If the permission rules of the session do not allow the tool `schedule`, a permission prompt shows in the channel.
+- The answer in the thread of the job post shows the schedule as the plugin keeps it, and the next run. Examine it: the plugin keeps what the model read.
+- A schedule is a list of triggers. A trigger is an interval, or times of the day with or without days of the week. If two triggers are due together, one run starts.
+- An interval is a number of minutes, hours or days. The minimum is 1 minute. The interval starts when the model reads the schedule and after `/start`.
+- A time of the day is in your Mattermost time zone. If you have none, it is in the time zone of the computer of the session. The plugin reads the zone before each run. If the zone changed, the time in the old zone starts no run, and each time of the day gets its next time in the new zone.
+- When the clocks go forward, a time that does not occur moves forward by the jump. When the clocks go back, a time that occurs two times gives one run, at the first one.
+- A schedule has a maximum of 10 triggers, and a trigger has a maximum of 48 times.
+- If the model cannot read the schedule, or its turn fails, the plugin stops the job and tells you. Correct line 1, then send `/start`.
 
 The job post:
 
-- The interval is a number and a unit: `m`, `h` or `d`. Examples: `30m`, `2h`, `1d`. The minimum is `1m`.
+- The steps start on line 2. A post with the steps on line 1, such as `/every 30m Examine the disk space.`, is not a correct job.
 - In Claude Code, a line that is `/clear`, `/compact [text]`, `/context`, `/model <name>` or `/effort <level>` is a command step. The plugin types it in the terminal.
 - In pi, only `/compact [text]` is a command step. A line `/new`, `/clear`, `/context`, `/model`, `/thinking` or `/effort` cannot be a step. Thus one job post can make a job in Claude Code and no job in pi.
 - All lines between two command steps are one prompt step. Empty lines in a prompt stay.
 - A job has a maximum of 10 steps. `! <command>` cannot be a step.
-- The plugin reads the job post again before each run. To change the job, edit the post. If you delete the post, the plugin deletes the job. If the changed post is not correct, the plugin stops the job and tells you.
+- To change the job, edit the post. The plugin gets the edit immediately, and it reads the post again at each start of the session and before each run. If only the steps changed, the next run uses them. If line 1 changed, the model reads the new schedule, and no run starts before that. If you delete the post, the plugin deletes the job. If the changed post is not correct, the plugin stops the job and tells you.
 
 The commands:
 
@@ -122,19 +133,22 @@ The commands:
 
 A run:
 
-- A run starts when the job is due, the session is idle, and your last input is 5 minutes old or more. Your input is a post in Mattermost or a prompt at the terminal. The start of a session also counts.
+- A run starts when a trigger is due, the session is idle, and your last input is 5 minutes old or more. Your input is a post in Mattermost or a prompt at the terminal. The start of a session also counts.
 - If the session is busy for more than one interval, one run occurs. Missed runs do not collect.
+- A run for a time of the day starts a maximum of 1 hour late. After that, the plugin skips it and tells you in the thread. An interval has no such limit: its run starts when the session is free.
 - A post that you write during a run goes to the model between two steps.
 - The output of a run goes to the thread of the job post, without a mention. The answer to a post that you write in that thread also goes to the thread, with a mention.
 - A permission prompt of a run shows in the channel with a mention, and the run waits for the answer.
 - In pi, `/new` or `/resume` at the terminal during a run stops the run with no message.
 - If a step fails, the run stops and the job stays. The plugin tells you in the thread. Only the first failure after a good run has a mention.
-- Each run sets the count of agent posts to 0. Thus the limit of 100 agent posts applies to each interval, and two sessions that each have a job can talk without end. `/stop` and `/drop` end this.
-- The state file is `~/.config/mattermost-agents/schedules/<bot id>.json`. It has the id of the job post and the next time. It does not have the steps.
+- Each run sets the count of agent posts to 0. Thus the limit of 100 agent posts applies to each run, and two sessions that each have a job can talk without end. `/stop` and `/drop` end this.
+- The state file is `~/.config/mattermost-agents/schedules/<bot id>.json`. It has the id of the job post, the schedule that the model read, and the next time of each trigger. It does not have the steps.
+- A state file of a version before the free-text schedule has no schedule. At the first start, the model reads line 1 of its job post.
 
 Risks:
 
-- `/clear` as a step of Claude Code deletes the context of the conversation at each interval.
+- `/clear` as a step of Claude Code deletes the context of the conversation at each run.
+- The model can read a schedule incorrectly. Then the job runs at incorrect times with your authority. The answer in the thread is the only control.
 - After `/clear` or a new start, the conversation is new. Thus a prompt step must be complete without the old context.
 - In Claude Code, the plugin types a command step with nobody at the terminal. A draft in the terminal prompt joins the typed command and goes to the model. Enter selects the focused option of an open dialog. The quiet time of 5 minutes does not prevent this.
 - In Claude Code, `/model` and `/effort` as steps also change the default for new sessions.
@@ -188,7 +202,7 @@ Read this before you install.
 - A post of the owner has the authority of the user at the terminal. In Claude Code such a post can approve an action that auto mode blocked. A person who gets control of the owner account in Mattermost controls each connected session.
 - The plugin accepts a post as an owner post only if its user id is `MM_OWNER_ID`, it is in the channel of the session, in a direct message to the bot, or in `agents` with a mention of the bot, and it is not a system post or a post from a webhook, an OAuth app or a server plugin. A post of another agent session reaches the model as a request without the authority of the owner, with a limit of 100 such posts after the last input of the owner. While a session works on such a post, its `send` and `follow` tools give an error until the next input of the owner. A followed post has the same limits, with its own limit of 20 for each hour. The follower can edit its follow state file. The plugin ignores a post of a different user. An agent session is a bot account with a username of the form `<name>-cc` or `<name>-pi`. The plugin does not check who made the bot.
 - In Claude Code, the server types text into the terminal for the typed commands. A post `! <command>` runs a shell command with your rights.
-- A job runs with your authority while you are not there. Its steps come only from your job post in Mattermost, which the plugin reads before each run. The agent can edit the state file of the job. Thus it can stop the job, delete it, or point it to a different `/every` post of yours in the channel of the session. It cannot write new steps.
+- A job runs with your authority while you are not there. Its steps come only from your job post in Mattermost, which the plugin reads before each run. The model gives the schedule, and only while a request of the plugin for it is open. The agent can edit the state file of the job. Thus it can stop the job, delete it, change its times, or point it to a different `/every` post of yours in the channel of the session. It cannot write new steps.
 - The password of the provisioning user is in a plain file. Each process of your OS user can read it. This user can make and control bots on the Mattermost server.
 - The hooks talk to the server through a Unix socket in `~/.config/mattermost-agents/run/`. Each process of your OS user can use it.
 - The bot of a session sends files only on a tool call of the model. It refuses `.env` files and the files in `~/.config/mattermost-agents/`.

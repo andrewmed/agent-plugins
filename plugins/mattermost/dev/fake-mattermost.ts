@@ -5,7 +5,7 @@ const port = Number(process.env.FAKE_PORT ?? 18065)
 let serial = 0
 const makeId = (prefix: string) => `${prefix}${String(++serial).padStart(6, '0')}`
 
-type User = { id: string; username: string; is_bot: boolean; description?: string; delete_at: number; display_name?: string }
+type User = { id: string; username: string; is_bot: boolean; description?: string; delete_at: number; display_name?: string; timezone?: Record<string, string> }
 type Channel = { id: string; team_id: string; name: string; display_name: string; type: string; delete_at: number; creator_id?: string; members: Set<string> }
 type Conn = { userId?: string }
 
@@ -24,6 +24,7 @@ const log: string[] = []
 for (const [id, username] of [['ownerfake', 'owner'], ['provisionfake', 'provision'], ['otherfake', 'other']] as const) {
   users.set(id, { id, username, is_bot: false, delete_at: 0 })
 }
+users.get('ownerfake')!.timezone = { useAutomaticTimezone: 'true', automaticTimezone: process.env.FAKE_OWNER_ZONE ?? 'Europe/Madrid', manualTimezone: '' }
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body ?? {}), { status, headers: { 'Content-Type': 'application/json', ...headers } })
@@ -46,7 +47,7 @@ function caller(req: Request): string | undefined {
 }
 
 function publicUser(user: User): object {
-  return { id: user.id, username: user.username, is_bot: user.is_bot, delete_at: user.delete_at }
+  return { id: user.id, username: user.username, is_bot: user.is_bot, delete_at: user.delete_at, ...(user.timezone ? { timezone: user.timezone } : {}) }
 }
 
 function broadcast(channel: Channel, event: string, data: object): void {
@@ -255,6 +256,7 @@ async function testRoute(req: Request, path: string): Promise<Response> {
     if (path === '/edit') {
       post.message = body.message
       post.edit_at = Date.now()
+      broadcast(channels.get(post.channel_id)!, 'post_edited', { post: JSON.stringify(post) })
     } else post.delete_at = Date.now()
     return json(post)
   }

@@ -408,3 +408,36 @@ Passed on the fake server:
 - In Node 26, from `bun build --target=node`: `provision` with the harness `pi` gave `ai-pi` and `ai-review-pi`, a second `takeLock` of each key gave no lock, and a later `provision` with no name did not disable `ai-review-pi`.
 
 Not tested: a real Claude Code or a real pi with the variable, a post to a session with a name, a job in a session with a name, Linux. Not tested on the production server.
+
+## Job schedule in free text, 2026-11-19
+
+Claude Code 2.1.328 with the model `claude-haiku-5-5`, macOS, Node 26.13.1.
+
+Change: line 1 of a job post is `/every <free text>`, and the steps start on line 2. The model of the session reads line 1 and gives the schedule with the new tool `schedule`. The old parse of `/every <interval>` and the form on one line are removed.
+
+- The request for the schedule is a `Run` with one prompt step and the field `schedule`. It goes through `Mailbox.startJob` and `deliverPrompt`, with the tag `job="run"`. It does not wait for the quiet time. `failRun` and the end of a turn with no tool call stop the job, with a mention.
+- The tool `schedule` works only while such a run is open, with the `run_id` of the request as `request_id`. The triggers are `{ every: "48h" }` or `{ days: ["sun"], times: ["14:00"] }`.
+- The state file has `schedule`: the text of line 1, the zone, the triggers and one next time for each trigger. A state file with `nextAt` and no `schedule` is of the old form: the first tick with a ready session asks the model.
+- `Session.onEvent` handles `post_edited`. `applyRead` in `jobs.ts` compares the post with the state at the event, at the start of the session and before each run.
+- The time zone comes from `timezone` of `GET /users/<owner id>`: `automaticTimezone` when `useAutomaticTimezone` is `"true"`, else `manualTimezone`. With no value, the zone of the computer applies. With no answer, the zone of the state file applies. The conversion uses `Intl.DateTimeFormat`.
+- A time of the day that is more than 1 hour late starts no run. An interval has no such limit.
+
+Decisions of the owner: the model reads each schedule, also `30m`. The form on one line is removed.
+
+Method: the method of the section `Plugin for Claude Code and package for pi`, with `--plugin-dir` on the folder `plugins/mattermost` of the working copy, tmux started with `env -u HERDR_ENV -u HERDR_PANE_ID`, and `dev/fake-mattermost.ts` on the port 18191. The fake server now gives the owner the time zone `Europe/Madrid` (`FAKE_OWNER_ZONE` changes it), and `/__test/edit` sends the `post_edited` event. The session was in the permission mode `auto`.
+
+Measured with the real Claude Code on the fake server:
+
+- A job post with line 1 `/every sunday at 14:00 , wedn 09am and 21pm and every 48 hours`: the reaction `eyes`, then 5 seconds later the post `Job: Sun at 14:00; Wed at 09:00, 21:00; each 48h (Europe/Madrid), 1 step. Next run: <time> Europe/Madrid.` in the thread. No permission prompt showed.
+- After the tool call the model wrote one more text, which went to the thread with no mention. The tool result `Write no text after this call` did not prevent it.
+- With the rule `Do not guess` in the request, the model gave `error` for `day at 14:00 15:59 and 20`: it read `20` as not clear. The job stopped with a mention. The request now has a rule for a number with no unit. After that, `/start` gave `each day at 14:00, 15:59, 20:00 (Europe/Madrid)` in 4 seconds.
+- An edit of line 1 with `/__test/edit`: the new confirmation 3 seconds after the edit. An edit of only the step: the post `The job post changed. The job is now: each 1m, 1 step.` at once, and no request to the model.
+- After `/exit` and a new start with a stopped job that had no schedule, the start post showed `job, stopped`.
+- A job with `/every minute` and one prompt step: `/job` showed `Job: each 1m, 1 step`, `State: active` and the next run in `Europe/Madrid`. The first run came 5 minutes and 2 seconds after the last owner post, and the second run 1 minute later. The two answers went to the thread with no mention.
+- `/drop` deleted the job and the state file.
+
+Tested: `bun test dev`. In Node 26, from `bun build --target=node`: the times of the day in `Europe/Madrid` with the two changes of the clocks, a job post, the tool call, a run and the `post_edited` event with a subclass of `JobSession`. `pi.ts` loads in Node.
+
+Not tested with a real Claude Code: a session that is busy when the job post arrives, a model turn that calls no tool, a permission prompt for the tool `schedule`, a time of the day that becomes due, a late time of the day, a change of the time zone, and a state file of the old form. The unit tests have these cases, but not the permission prompt. Not tested: a real pi, a model other than `claude-haiku-5-5`, Linux.
+
+Not tested on the production server. Not measured there: that the bot gets the field `timezone` of the owner from `GET /users/<owner id>`, and that the bot gets the `post_edited` event for a post of the owner. The fake server gives the two by assumption, not from a measurement.
