@@ -212,6 +212,10 @@ export function readFollow(path: string): Follow | undefined {
   return { from: state.from, purpose: state.purpose, report: state.report === true }
 }
 
+export function screenshotRule(toolPrefix = ''): string {
+  return `If a tool cannot complete the task of a post of the owner and that tool can make a screenshot, for example a browser, make a screenshot. Give it with ${toolPrefix}reply, with the post_id of that post and the path of the screenshot in files. In that reply, write only a short caption. The text of the turn tells the problem.`
+}
+
 export function agentRules(toolPrefix = ''): string[] {
   const reply = `${toolPrefix}reply`
   return [
