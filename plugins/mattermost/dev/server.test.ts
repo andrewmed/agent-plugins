@@ -3,7 +3,7 @@ import { Bridge, HELP_TEXT, Mailbox, jobStepKind, parseVerdict, terminalCommand 
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, withLast, type Entry } from '../transcript.ts'
 import { FOLLOW_LIMIT, LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, readFollow, route, safeFileName, sessionName, takeLock, untilStarted, type RouteContext } from '../session.ts'
 import { ApiError, Socket, botUsername, markedSession, provision, sessionKey, sessionMarker, type Post } from '../mattermost.ts'
-import { readState } from '../schedule.ts'
+import { firstDue, readState } from '../schedule.ts'
 import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from 'fs'
 import { hostname, tmpdir } from 'os'
 import { join } from 'path'
@@ -1435,6 +1435,24 @@ describe('job', () => {
     expect(schedule.due).toHaveLength(3)
     expect(schedule.due[2]).toBeGreaterThanOrEqual(before + 172_800_000)
     for (const at of schedule.due.slice(0, 2)) expect(at - before).toBeLessThanOrEqual(7 * 86_400_000)
+  })
+
+  test('a number of random times: the plugin selects the times, and /start keeps the times of the day', async () => {
+    const { bridge, posted, sent, owner, answer } = jobBridge()
+    await owner('j1', '/every 5 times a day in random time\nExamine the disk.')
+    expect(sent[0].params.content).toContain('a trigger with `count`')
+    const before = Date.now()
+    await answer({ triggers: [{ count: 5 }] })
+    expect(posted[0]!.message).toContain(':alarm_clock: Job: each day at 5 random times from 00:00 to 24:00 (UTC), 1 step. Next run: ')
+    const schedule = bridge.job.schedule
+    expect(schedule.triggers).toEqual([{ days: [], count: 5, from: '00:00', to: '24:00' }])
+    expect(schedule.due[0]).toBeGreaterThan(before)
+    expect(schedule.due[0] - before).toBeLessThanOrEqual(2 * 86_400_000)
+    expect(schedule.due).toEqual(firstDue(schedule.triggers, before, 'UTC', 'j1'))
+    await owner('s', '/stop')
+    await owner('u', '/start')
+    expect(posted.at(-1)!.message).toContain('The job runs again: each day at 5 random times from 00:00 to 24:00 (UTC), 1 step. Next run: ')
+    expect(bridge.job.schedule.due).toEqual(schedule.due)
   })
 
   test('with no time zone in Mattermost the zone of the computer applies, and with no answer of Mattermost the zone of the state applies', async () => {

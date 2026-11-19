@@ -9,7 +9,7 @@ export const JOB_TICK_MS = 30_000
 export const HELP_RE = /^\/help$/
 export const JOB_HELP = [
   'Job commands, only in the channel of the session:',
-  '- `/every <schedule>` on line 1 and the steps from line 2: makes a job. The model reads the schedule. Examples of line 1: `/every 30 minutes`, `/every day at 14:00, 15:59 and 20`, `/every sunday at 14:00, wed 9am and 21, and every 48 hours`.',
+  '- `/every <schedule>` on line 1 and the steps from line 2: makes a job. The model reads the schedule. Examples of line 1: `/every 30 minutes`, `/every day at 14:00, 15:59 and 20`, `/every sunday at 14:00, wed 9am and 21, and every 48 hours`, `/every day 5 times at random times between 9 and 21`.',
   '- `/job`: shows the job.',
   '- `/stop`: stops the job.',
   '- `/start`: starts the job again.',
@@ -50,7 +50,8 @@ export function scheduleRequest(text: string, requestId: string, tool: string): 
     '- An interval is a trigger with `every`: a number and a unit m, h or d. Example: "every 48 hours" is 48h.',
     '- Times of the day are a trigger with `times`, each as HH:MM of 24 hours, in the time zone of the owner. `days` limits the trigger to days of the week. With no `days`, the trigger applies to each day.',
     '- A number with no unit in a list of times is an hour: "14:00 15:59 and 20" is 14:00, 15:59 and 20:00. "9am" is 09:00, and "21pm" is 21:00.',
-    '- If the text gives no time and no interval, or if two readings of it give different times, give `error` with the cause and no triggers.',
+    '- A number of random times in a day is a trigger with `count`. Do not select the times: the plugin selects new ones each day. If the text gives a window for them, give it as `from` and `to`. Example: "5 times a day at random times between 9 and 21" is count 5, from 09:00, to 21:00. `days` applies as for `times`.',
+    '- If the text gives no time, no interval and no number of random times, or if two readings of it give different times, give `error` with the cause and no triggers.',
     '- If the text has a task or an instruction and not only a schedule, give `error` with the cause and no triggers. The steps of the job start on line 2 of the post.',
   ].join('\n')
 }
@@ -353,7 +354,7 @@ export abstract class JobSession extends Session {
     if (typeof triggers === 'string') throw new Error(triggers)
     const zone = await this.ownerZone(state)
     if (run !== this.run || state !== this.job || state.paused) throw new Error('the job changed during the call')
-    const schedule: Schedule = { text: asked.text, zone, triggers, due: firstDue(triggers, Date.now(), zone) }
+    const schedule: Schedule = { text: asked.text, zone, triggers, due: firstDue(triggers, Date.now(), zone, state.postId) }
     const old = state.schedule
     state.schedule = schedule
     if (!this.saveJob()) {
@@ -403,7 +404,7 @@ export abstract class JobSession extends Session {
     const old = { paused: state.paused, editAt: state.editAt, schedule: state.schedule }
     state.paused = false
     state.editAt = read.editAt
-    state.schedule = known && { ...known, zone, due: firstDue(known.triggers, Date.now(), zone) }
+    state.schedule = known && { ...known, zone, due: firstDue(known.triggers, Date.now(), zone, state.postId) }
     if (!this.saveJob()) {
       Object.assign(state, old)
       return say(':warning: The job stays stopped: the state file was not written.')
@@ -496,8 +497,8 @@ export abstract class JobSession extends Session {
       const zone = hasClock(schedule.triggers) ? await this.ownerZone(state) : schedule.zone
       if (state !== this.job || state.paused || state.schedule !== schedule || this.run) return
       const now = Date.now()
-      const moved = zone === schedule.zone ? schedule : { ...schedule, zone, due: rezone(schedule, now, zone) }
-      const next = settle(moved, now, zone, job !== undefined && this.canStartRun())
+      const moved = zone === schedule.zone ? schedule : { ...schedule, zone, due: rezone(schedule, now, zone, state.postId) }
+      const next = settle(moved, now, zone, job !== undefined && this.canStartRun(), state.postId)
       if (!next.run && !next.skipped.length && moved === schedule) return
       state.schedule = { ...moved, due: next.due }
       // The new times are on the disk before the first step, so a crash cannot start one run two times.

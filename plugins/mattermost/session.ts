@@ -323,8 +323,11 @@ export const TOOLS = [
           items: {
             type: 'object',
             properties: {
-              every: { type: 'string', description: 'An interval: a number and a unit m, h or d. Examples: 30m, 48h, 1d. Not together with times or days' },
+              every: { type: 'string', description: 'An interval: a number and a unit m, h or d. Examples: 30m, 48h, 1d. Not together with times, count or days' },
               times: { type: 'array', items: { type: 'string' }, description: 'Times of the day as HH:MM of 24 hours, in the time zone of the owner' },
+              count: { type: 'integer', description: 'A number of random times in each day. The plugin selects the times, new ones each day. Not together with times' },
+              from: { type: 'string', description: 'Only with count: the start of the window of the random times as HH:MM. Default: 00:00' },
+              to: { type: 'string', description: 'Only with count: the end of the window as HH:MM, after `from`, 24:00 at most. Default: 24:00' },
               days: { type: 'array', items: { type: 'string', enum: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] }, description: 'The days of the week of the times. Default: each day' },
             },
           },

@@ -105,12 +105,13 @@ Examine the disk space. Tell me if a disk is more than 80 % full.
 
 The schedule:
 
-- Line 1 after `/every` is the schedule in free text. Examples: `/every 30 minutes`, `/every day at 14:00, 15:59 and 20`, `/every sunday at 14:00, wed 9am and 21, and every 48 hours`.
+- Line 1 after `/every` is the schedule in free text. Examples: `/every 30 minutes`, `/every day at 14:00, 15:59 and 20`, `/every sunday at 14:00, wed 9am and 21, and every 48 hours`, `/every day 5 times at random times between 9 and 21`.
 - The model of the session reads the schedule. The plugin sends it only line 1, not the steps, and the model answers with the tool `schedule`. This needs one turn, so a busy session reads the schedule after its turn. The plugin does not wait for the quiet time.
 - If the permission rules of the session do not allow the tool `schedule`, a permission prompt shows in the channel.
 - The answer in the thread of the job post shows the schedule as the plugin keeps it, and the next run. Examine it: the plugin keeps what the model read.
-- A schedule is a list of triggers. A trigger is an interval, or times of the day with or without days of the week. If two triggers are due together, one run starts.
+- A schedule is a list of triggers. A trigger is an interval, times of the day, or a number of random times in a day. Times of the day and random times can have days of the week. If two triggers are due together, one run starts.
 - An interval is a number of minutes, hours or days. The minimum is 1 minute. The interval starts when the model reads the schedule and after `/start`.
+- For a number of random times, the plugin selects that number of different times in each day, to the minute, and new ones each day. The model gives only the number and the window. With no window in the text, the window is the full day, 00:00 to 24:00. A window across midnight is not possible. On the first day, a time that is in the past gives no run. The times of a day stay the same after a new start of the session and after `/start`. A new job post gets different times. All the rules for a time of the day apply to a random time.
 - A time of the day is in your Mattermost time zone. If you have none, it is in the time zone of the computer of the session. The plugin reads the zone before each run. If the zone changed, the time in the old zone starts no run, and each time of the day gets its next time in the new zone.
 - When the clocks go forward, a time that does not occur moves forward by the jump. When the clocks go back, a time that occurs two times gives one run, at the first one.
 - A schedule has a maximum of 10 triggers, and a trigger has a maximum of 48 times.
@@ -136,6 +137,7 @@ A run:
 - A run starts when a trigger is due, the session is idle, and your last input is 5 minutes old or more. Your input is a post in Mattermost or a prompt at the terminal. The start of a session also counts.
 - If the session is busy for more than one interval, one run occurs. Missed runs do not collect.
 - A run for a time of the day starts a maximum of 1 hour late. After that, the plugin skips it and tells you in the thread. An interval has no such limit: its run starts when the session is free.
+- When a run starts, each due trigger gets its first time after that moment. Thus, if two or more times of one trigger pass during one run, only one run follows, and the plugin does not tell you about the other times. Random times can be near each other, so a day can have fewer runs than the number.
 - A post that you write during a run goes to the model between two steps.
 - The output of a run goes to the thread of the job post, without a mention. The answer to a post that you write in that thread also goes to the thread, with a mention.
 - A permission prompt of a run shows in the channel with a mention, and the run waits for the answer.

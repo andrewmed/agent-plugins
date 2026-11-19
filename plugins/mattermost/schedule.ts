@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 
@@ -15,7 +16,9 @@ export type StepKind = 'command' | 'text' | 'refused'
 // text is line 1 of the job post after `/every`. The model of the session reads it.
 export type Job = { text: string; steps: Step[] }
 // every is a number and a unit, for example 48h. With no days, the times apply to each day.
-export type Trigger = { every: string } | { days: string[]; times: string[] }
+// count is a number of random times in the window from `from` to `to`, new ones each day. `to` can be 24:00.
+export type Trigger = { every: string } | ClockTrigger
+type ClockTrigger = { days: string[]; times: string[] } | { days: string[]; count: number; from: string; to: string }
 // text is the text that the model read. due has the next time of each trigger.
 export type Schedule = { text: string; zone: string; triggers: Trigger[]; due: number[] }
 export type JobState = { postId: string; editAt: number; paused: boolean; lastRun?: { at: number; result: string }; schedule?: Schedule }
@@ -65,6 +68,16 @@ function absent(value: unknown): boolean {
   return value === undefined || value === null || (Array.isArray(value) && !value.length)
 }
 
+function clockText(time: unknown): string | undefined {
+  const match = typeof time === 'string' ? /^(\d{1,2}):(\d{2})$/.exec(time) : null
+  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return undefined
+  return `${match[1]!.padStart(2, '0')}:${match[2]}`
+}
+
+function minuteOf(time: string): number {
+  return Number(time.slice(0, 2)) * 60 + Number(time.slice(3))
+}
+
 // The triggers come from the model or from the state file. The result is the triggers in one form, or the cause that they are not correct.
 export function normalizeTriggers(input: unknown): Trigger[] | string {
   if (!Array.isArray(input) || !input.length) return '`triggers` must be a list with one trigger or more'
@@ -72,20 +85,13 @@ export function normalizeTriggers(input: unknown): Trigger[] | string {
   const triggers: Trigger[] = []
   for (const item of input) {
     if (!item || typeof item !== 'object') return `a trigger must be an object: ${shown(item)}`
-    const { every, days, times } = item as { every?: unknown; days?: unknown; times?: unknown }
+    const { every, days, times, count, from, to } = item as Record<string, unknown>
+    const window = !absent(from) || !absent(to)
     if (!absent(every)) {
-      if (!absent(days) || !absent(times)) return 'a trigger has `every` or `times`, not the two'
+      if (!absent(days) || !absent(times) || !absent(count) || window) return 'a trigger has only one of `every`, `times` and `count`'
       if (typeof every !== 'string' || !parseInterval(every)) return `\`every\` must be a number and a unit (m, h or d), for example 30m, 48h or 1d: ${shown(every)}`
       triggers.push({ every })
       continue
-    }
-    if (!Array.isArray(times) || !times.length) return 'a trigger must have `every` or `times`'
-    if (times.length > MAX_TIMES) return `a trigger has ${times.length} times, and the maximum is ${MAX_TIMES}`
-    const clock = new Set<string>()
-    for (const time of times) {
-      const match = typeof time === 'string' ? /^(\d{1,2}):(\d{2})$/.exec(time) : null
-      if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return `a time must be HH:MM from 00:00 to 23:59: ${shown(time)}`
-      clock.add(`${match[1]!.padStart(2, '0')}:${match[2]}`)
     }
     const week = new Set<number>()
     if (!absent(days) && !Array.isArray(days)) return '`days` must be a list'
@@ -94,7 +100,30 @@ export function normalizeTriggers(input: unknown): Trigger[] | string {
       if (typeof day !== 'string' || index < 0) return `a day must be one of ${DAYS.join(', ')}: ${shown(day)}`
       week.add(index)
     }
-    triggers.push({ days: [...week].sort().map(index => DAYS[index]!), times: [...clock].sort() })
+    const weekDays = [...week].sort().map(index => DAYS[index]!)
+    if (!absent(count)) {
+      if (!absent(times)) return 'a trigger has only one of `every`, `times` and `count`'
+      if (!Number.isInteger(count) || (count as number) < 1 || (count as number) > MAX_TIMES) return `\`count\` must be a whole number from 1 to ${MAX_TIMES}: ${shown(count)}`
+      const start = absent(from) ? '00:00' : clockText(from)
+      const end = absent(to) || to === '24:00' ? '24:00' : clockText(to)
+      if (!start) return `\`from\` must be HH:MM from 00:00 to 23:59: ${shown(from)}`
+      if (!end) return `\`to\` must be HH:MM from 00:01 to 24:00: ${shown(to)}`
+      const minutes = minuteOf(end) - minuteOf(start)
+      if (minutes <= 0) return `\`from\` must be before \`to\`, and a window across midnight is not possible: ${start} to ${end}`
+      if (minutes < (count as number)) return `the window ${start} to ${end} has ${minutes} minutes, which is less than \`count\``
+      triggers.push({ days: weekDays, count: count as number, from: start, to: end })
+      continue
+    }
+    if (window) return '`from` and `to` apply only to a trigger with `count`'
+    if (!Array.isArray(times) || !times.length) return 'a trigger must have `every`, `times` or `count`'
+    if (times.length > MAX_TIMES) return `a trigger has ${times.length} times, and the maximum is ${MAX_TIMES}`
+    const clock = new Set<string>()
+    for (const time of times) {
+      const text = clockText(time)
+      if (!text) return `a time must be HH:MM from 00:00 to 23:59: ${shown(time)}`
+      clock.add(text)
+    }
+    triggers.push({ days: weekDays, times: [...clock].sort() })
   }
   return triggers
 }
@@ -144,19 +173,33 @@ function instant(clock: number, zone: string): number {
   return exact.length ? Math.min(...exact) : found[0]!
 }
 
-function nextClock(trigger: { days: string[]; times: string[] }, after: number, zone: string): number {
+// The minutes of the day of a trigger for one date. For a count trigger, the same seed, index and date always give the same minutes,
+// so a new start of the plugin and `/start` do not change the times of a day.
+function minutesOf(trigger: ClockTrigger, date: number, seed: string, index: number): number[] {
+  if ('times' in trigger) return trigger.times.map(minuteOf)
+  const start = minuteOf(trigger.from)
+  const size = minuteOf(trigger.to) - start
+  const found = new Set<number>()
+  for (let n = 0; found.size < trigger.count; n++) {
+    const hash = createHash('sha256').update(`${seed}:${index}:${date / DAY_MS}:${n}`).digest()
+    found.add(start + (hash.readUInt32BE(0) % size))
+  }
+  return [...found]
+}
+
+function nextClock(trigger: ClockTrigger, after: number, zone: string, seed: string, index: number): number {
   const midnight = Math.floor(wall(after, zone) / DAY_MS) * DAY_MS
   for (let day = 0; day <= 8; day++) {
     const date = midnight + day * DAY_MS
     if (trigger.days.length && !trigger.days.includes(DAYS[new Date(date).getUTCDay()]!)) continue
-    const times = trigger.times.map(time => instant(date + (Number(time.slice(0, 2)) * 60 + Number(time.slice(3))) * 60_000, zone)).filter(at => at > after)
+    const times = minutesOf(trigger, date, seed, index).map(minute => instant(date + minute * 60_000, zone)).filter(at => at > after)
     if (times.length) return Math.min(...times)
   }
   throw new Error('the trigger has no next time')
 }
 
 export function hasClock(triggers: Trigger[]): boolean {
-  return triggers.some(trigger => 'times' in trigger)
+  return triggers.some(trigger => !('every' in trigger))
 }
 
 // Missed runs do not collect: a time in the past moves to one interval after now.
@@ -165,13 +208,14 @@ export function nextTime(dueAt: number, intervalMs: number, now: number): number
   return next > now ? next : now + intervalMs
 }
 
-export function firstDue(triggers: Trigger[], now: number, zone: string): number[] {
-  return triggers.map(trigger => ('every' in trigger ? now + parseInterval(trigger.every)! : nextClock(trigger, now, zone)))
+// seed is the id of the job post. It selects the random times of a count trigger.
+export function firstDue(triggers: Trigger[], now: number, zone: string, seed: string): number[] {
+  return triggers.map((trigger, i) => ('every' in trigger ? now + parseInterval(trigger.every)! : nextClock(trigger, now, zone, seed, i)))
 }
 
 // After a change of the time zone, each time of the day gets its next time in the new zone.
-export function rezone(schedule: Schedule, now: number, zone: string): number[] {
-  return schedule.triggers.map((trigger, i) => ('times' in trigger ? nextClock(trigger, now, zone) : schedule.due[i]!))
+export function rezone(schedule: Schedule, now: number, zone: string, seed: string): number[] {
+  return schedule.triggers.map((trigger, i) => ('every' in trigger ? schedule.due[i]! : nextClock(trigger, now, zone, seed, i)))
 }
 
 export function nextAt(schedule: Schedule): number {
@@ -179,12 +223,12 @@ export function nextAt(schedule: Schedule): number {
 }
 
 export function isLate(schedule: Schedule, now: number): boolean {
-  return schedule.triggers.some((trigger, i) => 'times' in trigger && now - schedule.due[i]! > LATE_MS)
+  return schedule.triggers.some((trigger, i) => !('every' in trigger) && now - schedule.due[i]! > LATE_MS)
 }
 
 // Gives each due trigger its next time. All due triggers together start one run, and only when ready is true.
 // A time of the day that is more than LATE_MS in the past starts no run: skipped has it. An interval has no such limit.
-export function settle(schedule: Schedule, now: number, zone: string, ready: boolean): { due: number[]; run: boolean; skipped: number[] } {
+export function settle(schedule: Schedule, now: number, zone: string, ready: boolean, seed: string): { due: number[]; run: boolean; skipped: number[] } {
   const skipped: number[] = []
   let run = false
   const due = schedule.triggers.map((trigger, i) => {
@@ -197,11 +241,11 @@ export function settle(schedule: Schedule, now: number, zone: string, ready: boo
     }
     if (now - at > LATE_MS) {
       skipped.push(at)
-      at = nextClock(trigger, now - LATE_MS, zone)
+      at = nextClock(trigger, now - LATE_MS, zone, seed, i)
     }
     if (at > now || !ready) return at
     run = true
-    return nextClock(trigger, now, zone)
+    return nextClock(trigger, now, zone, seed, i)
   })
   return { due, run, skipped }
 }
@@ -212,7 +256,9 @@ export function timeText(ms: number, zone = 'UTC'): string {
 
 export function scheduleText(triggers: Trigger[]): string {
   const name = (day: string): string => day[0]!.toUpperCase() + day.slice(1)
-  return triggers.map(trigger => ('every' in trigger ? `each ${trigger.every}` : `${trigger.days.length ? trigger.days.map(name).join(', ') : 'each day'} at ${trigger.times.join(', ')}`)).join('; ')
+  const clock = (trigger: ClockTrigger): string =>
+    'times' in trigger ? trigger.times.join(', ') : `${trigger.count} random ${trigger.count === 1 ? 'time' : 'times'} from ${trigger.from} to ${trigger.to}`
+  return triggers.map(trigger => ('every' in trigger ? `each ${trigger.every}` : `${trigger.days.length ? trigger.days.map(name).join(', ') : 'each day'} at ${clock(trigger)}`)).join('; ')
 }
 
 function readSchedule(value: any): Schedule | undefined {
