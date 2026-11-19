@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { join } from 'path'
 import { ApiError, type Post } from './mattermost.ts'
 import { firstDue, hasClock, isLate, localZone, nextAt, normalizeTriggers, parseJob, readState, rezone, scheduleText, settle, timeText, userZone, writeState, type Job, type JobState, type Schedule, type Step, type StepKind } from './schedule.ts'
-import { LOOP_LIMIT, STATE_DIR, Session, errorText, isNormalPost, preview } from './session.ts'
+import { LOOP_LIMIT, STATE_DIR, Session, agentNotice, attachments, errorText, isNormalPost, preview, safeName, type Follow } from './session.ts'
 
 export const JOB_COMMAND_RE = /^\/(every|job|stop|start|drop)(?=\s|$)/
 export const JOB_TICK_MS = 30_000
@@ -222,6 +222,12 @@ export abstract class JobSession extends Session {
       if (!start.postId) start.postId = (await this.post(this.id!.channelId, message))?.id
       else await this.api!.api('PUT', `/posts/${start.postId}/patch`, { message })
     })
+  }
+
+  protected async fromAgent(post: Post, follow?: Follow): Promise<void> {
+    const sender = safeName(await this.userName(post.user_id))
+    this.track(post)
+    this.react(post.id, this.mailbox.offer(agentNotice(sender, post, attachments(post), follow?.purpose), follow) ? 'eyes' : 'no_entry_sign')
   }
 
   protected say(channelId: string, text: string, rootId = ''): void {

@@ -9,7 +9,7 @@ import { basename, join } from 'path'
 import { sessionKey, type Config, type Post, type WsEvent } from './mattermost.ts'
 import { HELP_RE, JOB_COMMAND_RE, JOB_HELP, JOB_TICK_MS, JobSession, commandText, tagValue, type CommandResult, type Run } from './jobs.ts'
 import { type StepKind } from './schedule.ts'
-import { RUN_DIR, TOOLS, agentNotice, agentRules, attachments, screenshotRule, errorText, isLive, quote, readConfig, safeName, takeLock, type Follow, type Lock } from './session.ts'
+import { RUN_DIR, TOOLS, agentRules, attachments, screenshotRule, errorText, isLive, quote, readConfig, safeName, takeLock, type Lock } from './session.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, isInterrupt, withLast, type Entry } from './transcript.ts'
 
 export const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -427,13 +427,6 @@ export class Bridge extends JobSession {
 
   protected taskFromAgent(): boolean {
     return this.mailbox.agentTask
-  }
-
-  protected async fromAgent(post: Post, follow?: Follow): Promise<void> {
-    const sender = safeName(await this.userName(post.user_id))
-    this.track(post)
-    const text = agentNotice(sender, post, attachments(post), follow?.purpose)
-    this.react(post.id, this.mailbox.offer(text, follow) ? 'eyes' : 'no_entry_sign')
   }
 
   ask(): string {

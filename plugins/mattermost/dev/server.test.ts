@@ -444,16 +444,6 @@ describe('provision', () => {
     expect(calls).not.toContain('POST /bots/b5/disable')
     expect(calls).toContain('POST /bots/b6/disable')
   })
-
-  test('a bot with the old marker of this host is removed, also when its session is live', async () => {
-    const old = { user_id: 'b3', username: 'ai-claude', description: 'mm-agent host=mac session=/x/ai', delete_at: 0 }
-    const other = { user_id: 'b4', username: 'ai-claude', description: 'mm-agent host=linux session=/x/ai', delete_at: 0 }
-    const calls = stub(undefined, [mine, old, other])
-    await provision(config, 'mac', '/x/ai', () => true, () => {})
-    expect(calls).toContain('POST /bots/b3/disable')
-    expect(calls).not.toContain('POST /bots/b4/disable')
-    expect(calls).not.toContain('POST /bots/bot/disable')
-  })
 })
 
 test('reply is limited to posts that this session received', () => {

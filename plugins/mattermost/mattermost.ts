@@ -253,16 +253,13 @@ async function removeGoneSessions(
 ): Promise<void> {
   for (const bot of bots) {
     const session = markedSession(String(bot.description ?? ''), host, harness)
-    // Migration of 2026-11-10 from the suffix -claude to -cc: removes the bots that have the marker without a suffix.
-    // Delete `old` when no session of the old version runs.
-    const old = harness === 'claude' && !bot.delete_at && String(bot.description ?? '').startsWith(`mm-agent host=${host} session=`)
     const folder = session?.replace(/#[a-z0-9_-]+$/, '')
-    if (!old && (!session || bot.delete_at || existsSync(session) || existsSync(folder!) || (await isLive(session)))) continue
+    if (!session || bot.delete_at || existsSync(session) || existsSync(folder!) || (await isLive(session))) continue
     try {
       const channel = await admin.api('GET', `/teams/${teamId}/channels/name/${bot.username}`).catch(() => undefined)
       if (channel?.creator_id === bot.user_id) await admin.api('DELETE', `/channels/${channel.id}`)
       await admin.api('POST', `/bots/${bot.user_id}/disable`)
-      log(old ? `removed the old bot ${bot.username}` : `removed the session of the gone directory ${session}`)
+      log(`removed the session of the gone directory ${session}`)
     } catch (err) {
       log(`cleanup of ${bot.username} failed: ${err instanceof Error ? err.message : String(err)}`)
     }

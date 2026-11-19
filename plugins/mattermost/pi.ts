@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import { sessionKey, type Config, type Post } from './mattermost.ts'
 import { JOB_COMMAND_RE, JOB_HELP, JOB_TICK_MS, JobSession, tagValue, type CommandResult, type Run } from './jobs.ts'
 import type { StepKind } from './schedule.ts'
-import { RUN_DIR, STATE_DIR, TOOLS, agentNotice, agentRules, attachmentList, attachments, errorText, isLive, quote, readConfig, safeName, screenshotRule, takeLock, type Follow, type Lock } from './session.ts'
+import { RUN_DIR, STATE_DIR, TOOLS, agentRules, attachmentList, attachments, errorText, isLive, quote, readConfig, safeName, screenshotRule, takeLock, type Lock } from './session.ts'
 
 const TOOL_PREFIX = 'mattermost_'
 const NEW_SESSION_COMMAND = 'mattermost-new'
@@ -337,12 +337,6 @@ export class PiBridge extends JobSession {
 
   protected taskFromAgent(): boolean {
     return this.agentTask
-  }
-
-  protected async fromAgent(post: Post, follow?: Follow): Promise<void> {
-    const sender = safeName(await this.userName(post.user_id))
-    this.track(post)
-    this.react(post.id, this.mailbox.offer(agentNotice(sender, post, attachments(post), follow?.purpose), follow) ? 'eyes' : 'no_entry_sign')
   }
 
   protected stepKind(line: string): StepKind {
