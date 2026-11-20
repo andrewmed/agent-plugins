@@ -429,11 +429,28 @@ describe('provision', () => {
     expect(made).toEqual([])
   })
 
-  test('a bot name that a different host has gets a hash', async () => {
-    stub(undefined, [])
+  test('the bot of a different host with the same name is used and gets the marker of this host', async () => {
+    for (const session of ['review', '/x/review']) {
+      const calls = stub(undefined, [mine, { user_id: 'b3', username: 'review-cc', description: sessionMarker('linux', session), delete_at: 0 }])
+      await provision(config, 'mac', 'review', key => key === session, () => {})
+      expect(made).toEqual([])
+      expect(calls).toContain('PUT /bots/b3')
+      expect(calls).toContain('POST /users/b3/tokens')
+    }
+  })
+
+  test('a bot with the same name that is not the bot of an agent session is not used', async () => {
+    const calls = stub(undefined, [mine, { user_id: 'b3', username: 'review-cc', description: 'a different bot', delete_at: 0 }])
+    await expect(provision(config, 'mac', 'review', () => false, () => {})).rejects.toThrow('the bot review-cc is not the bot of an agent session')
+    expect(calls).not.toContain('PUT /bots/b3')
+    expect(calls).not.toContain('POST /users/b3/tokens')
+  })
+
+  test('a name that a user has gets no bot with a different name', async () => {
+    stub(undefined, [mine])
     taken = ['review-cc']
-    await provision(config, 'mac', 'review', () => false, () => {})
-    expect(made.map(bot => bot.username)).toEqual(['review-cc', expect.stringMatching(/^review-[0-9a-f]{3}-cc$/)])
+    await expect(provision(config, 'mac', 'review', () => false, () => {})).rejects.toThrow(ApiError)
+    expect(made.map(bot => bot.username)).toEqual(['review-cc'])
   })
 
   const here = import.meta.dir
@@ -452,12 +469,11 @@ describe('provision', () => {
   const old = { user_id: 'b7', username: 'dev-cc', description: sessionMarker('mac', here), delete_at: 0 }
 
   test('the bot of a folder with the same name continues with the marker of the name', async () => {
-    const calls = stub(undefined, [mine, old, { ...old, user_id: 'b8', description: sessionMarker('linux', here) }])
+    const calls = stub(undefined, [mine, old])
     await provision(config, 'mac', 'dev', () => false, () => {})
     expect(made).toEqual([])
     expect(calls).toContain('PUT /bots/b7')
     expect(calls).toContain('POST /users/b7/tokens')
-    expect(calls).not.toContain('PUT /bots/b8')
   })
 
   test('the bot of a folder is not taken from a live session of an old version', async () => {

@@ -81,7 +81,8 @@ Notes:
 - Only an interactive session connects. `claude -p` does not.
 - A session needs a name in the environment variable `MATTERMOST_SESSION`: `MATTERMOST_SESSION=review claude`. The session gets the bot `<name>-cc` and a public channel with the same name. The plugin adds you to the channel. The bot has its own job and follow state. The folder is not a part of the name.
 - The plugin reads the variable only from the environment. It changes the name to lowercase, removes the characters before the first letter, and keeps a maximum of 19 characters. A session with no name, or with a name that has no letter, does not connect: the log of the MCP server has the line `passive: MATTERMOST_SESSION is not set`, and each tool of the plugin gives this error. A session does not connect when a running session on the same computer has the same name, in each folder.
-- A bot that an older version made for a folder continues when the name is the same as the name of that folder.
+- The user name `<name>-cc` selects the bot. Thus a session with the same name uses the same bot on each computer, and a bot `<name>-cc` that an older version made continues. A bot of an older version with a hash in its user name, `<name>-<hash>-cc`, is not used.
+- Do not run one name on two computers at the same time. The second session revokes the token of the first, and the first session loses Mattermost until its next start.
 - If Claude Code says `Channels are not currently available` and you have `DISABLE_TELEMETRY` or `DO_NOT_TRACK` set, export `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF=1` in the environment that starts `claude`. A value in `settings.json` is too late.
 - The typed commands (`/compact`, `/clear`, `/context`, `/model`, `/effort`, `! <command>`) need a way to type into the terminal. On macOS the plugin uses `TIOCSTI`. On Linux, where the kernel usually has `TIOCSTI` off, they work only in a [herdr](https://herdr.dev) pane.
 - The tools of the plugin have the names `mcp__plugin_mattermost_mattermost__<tool>`.
@@ -96,13 +97,13 @@ A job is a sequence of steps that the session gets at each time of a schedule. T
 Examine the disk space. Tell me if a disk is more than 80 % full.
 ```
 
-| Post                                             | Effect                                                                            |
-| ------------------------------------------------ | --------------------------------------------------------------------------------- |
-| `/every <schedule>` on line 1, steps from line 2 | Makes the job. It replaces an old job.                                            |
-| `/job`                                           | Shows the schedule, the steps, the state, the next time and the last result.      |
-| `/stop`                                          | Stops new runs. The steps of a run in progress that did not start are cancelled.  |
-| `/start`                                         | Starts the job again. Each trigger gets its next time after the current time.     |
-| `/drop`                                          | Deletes the job.                                                                  |
+| Post                                             | Effect                                                                           |
+| ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `/every <schedule>` on line 1, steps from line 2 | Makes the job. It replaces an old job.                                           |
+| `/job`                                           | Shows the schedule, the steps, the state, the next time and the last result.     |
+| `/stop`                                          | Stops new runs. The steps of a run in progress that did not start are cancelled. |
+| `/start`                                         | Starts the job again. Each trigger gets its next time after the current time.    |
+| `/drop`                                          | Deletes the job.                                                                 |
 
 The schedule:
 

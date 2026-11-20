@@ -1,4 +1,3 @@
-import { createHash } from 'crypto'
 import { existsSync } from 'fs'
 
 export type Post = {
@@ -266,29 +265,23 @@ async function findOrCreateBot(
   harness: Harness,
 ): Promise<any> {
   const marker = sessionMarker(host, name, harness)
-  // Migration of 2026-11-20 from the folder to the name: the bot that has this name and the marker of a folder gets
-  // the marker of the name. Delete `old` when each bot of a session in use has the marker of a name.
-  const old = bots.find(bot => bot.username === botUsername(name, '', harness) && markedSession(String(bot.description ?? ''), host, harness)?.startsWith('/'))
-  const found = bots.find(bot => bot.description === marker) ?? old
-  if (found) {
-    if (found === old) {
-      if (await isLive(markedSession(old.description, host, harness)!)) throw new Error(`a session of an old version has the bot ${old.username}`)
-      await admin.api('PUT', `/bots/${old.user_id}`, { description: marker })
-    }
-    if (found.delete_at) await admin.api('POST', `/bots/${found.user_id}/enable`)
-    return found
-  }
-  const hash = createHash('sha256').update(marker).digest('hex').slice(0, 3)
-  for (const suffix of ['', hash]) {
-    const username = botUsername(name, suffix, harness)
-    const label = NAME_SUFFIX[harness]
+  const username = botUsername(name, '', harness)
+  const label = NAME_SUFFIX[harness]
+  // The user name is the identity: a session with this name on each host uses the same bot.
+  const found = bots.find(bot => bot.username === username)
+  if (!found) {
     const display_name = `${username.slice(0, -label.length - 1)} · ${label}`
-    try {
-      return await admin.api('POST', '/bots', { username, display_name, description: marker })
-    } catch (err) {
-      if (!(err instanceof ApiError) || err.status >= 500 || suffix) throw err
-    }
+    return admin.api('POST', '/bots', { username, display_name, description: marker })
   }
+  const description = String(found.description ?? '')
+  if (!description.startsWith(`mm-agent-${label} `)) throw new Error(`the bot ${username} is not the bot of an agent session`)
+  // Only a marker of a version before 2026-11-20 has a folder. Its lock key is that folder.
+  const folder = markedSession(description, host, harness)
+  if (folder?.startsWith('/') && (await isLive(folder))) throw new Error(`a session of an old version has the bot ${username}`)
+  // The marker of a folder must go: removeGoneSessions on the host of that folder disables its bot.
+  if (description !== marker) await admin.api('PUT', `/bots/${found.user_id}`, { description: marker })
+  if (found.delete_at) await admin.api('POST', `/bots/${found.user_id}/enable`)
+  return found
 }
 
 export async function ensureChannel(

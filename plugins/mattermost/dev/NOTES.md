@@ -466,3 +466,30 @@ Passed on the fake server:
 Tested: `bun test dev`.
 
 Not tested: a real Claude Code or a real pi with or without the variable, the notice of pi, the migration while a session of an older version runs, Linux. Not tested on the production server. Not measured there: that `PUT /bots/<bot id>` with only `description` changes the description, and that the provisioning user has the permission for it.
+
+## One bot for a name on each host, 2026-11-20
+
+Decision of the owner: the bot of the session `<name>` is `<name>-cc` on each host, with no hash. The owner accepts the result of the same name on two hosts at the same time.
+
+Change: this section replaces two items of the section `Obligatory session name with no folder, 2026-11-20`: the hash for a name that a bot of a different host has, and the migration.
+
+Observed on the production server before the change, from the posts in the channels and from the hash values, not from the bot descriptions: on the host `herdr`, the session `voley` got the bot `voley-4d1-cc`. The bot `voley-cc` had the marker of a folder on the host `air`. The bot of the folder on `herdr` was `voley-610-cc`, and the migration accepted only the user name `voley-cc`. `4d1` and `610` are the first 3 hex characters of the SHA-256 of the markers `mm-agent-cc host=herdr session=voley` and `mm-agent-cc host=herdr session=/home/node/workspace/voley`. The follow state stayed in the file of the `610` bot. The bots `mail-cc` and `weather-cc` of `herdr` continued after the migration, so `PUT /bots/<bot id>` with only `description` works there.
+
+- `findOrCreateBot` selects the bot by the user name `<name>-cc` or `<name>-pi`. The marker does not select the bot. If no bot has the user name, it makes the bot. If `POST /bots` fails, `provision` fails: no second name.
+- A bot with that user name is used only when its description starts with `mm-agent-cc ` or `mm-agent-pi `. If not, `provision` fails with `the bot <name>-cc is not the bot of an agent session`, and `untilStarted` tries again.
+- When the description is not the marker of this host and this name, the plugin writes that marker. This removes the marker of a folder, so `removeGoneSessions` on the host of that folder cannot disable the bot.
+- A marker of a folder on this host with a lock that is not free: `a session of an old version has the bot <name>-cc`, as before.
+- The lock is local to one host. A second session with the same name on a different host uses the same bot, and its `provision` revokes the token of the first session. The first session then gets HTTP 401 for each request and does not ask for a new token. Its turn text does not arrive, and the log has `post failed: HTTP 401`. Not measured: what the production server does with the open WebSocket of a revoked token. The fake server closes a connection that authenticates with a revoked token.
+- The bots with a hash in the user name stay in Mattermost with no session. The job state and the follow state of such a bot stay in its files and do not move to the bot `<name>-cc`.
+
+Method: `dev/fake-mattermost.ts` on port 18077 with the bots `voley-cc` (marker of a folder on `air`), `voley-610-cc`, `voley-4d1-cc` and `other-cc` (description `a different bot`). `provision` from `bun build mattermost.ts --target=node`, in Node 26, with the host `herdr`.
+
+Passed on the fake server:
+
+- The name `voley`, two times: the bot `voley-cc` with the same id, and its description became `mm-agent-cc host=herdr session=voley`. No bot was made.
+- The name `fresh`: a new bot `fresh-cc`. The name `voley` with the harness `pi`: a new bot `voley-pi`.
+- The name `other`: `the bot other-cc is not the bot of an agent session`.
+
+Tested: `bun test dev`.
+
+Not tested: a real Claude Code or a real pi, two sessions with the same name on two hosts, Linux. Not tested on the production server.
