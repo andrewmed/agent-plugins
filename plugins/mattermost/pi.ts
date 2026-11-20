@@ -4,7 +4,7 @@ import { homedir, hostname } from 'os'
 import { dirname, isAbsolute, join, relative, sep } from 'path'
 import { setTimeout as sleep } from 'timers/promises'
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
-import { sessionKey, type Config, type Post } from './mattermost.ts'
+import { sessionLabel, type Config, type Post } from './mattermost.ts'
 import { JOB_COMMAND_RE, JOB_HELP, JOB_TICK_MS, JobSession, tagValue, type CommandResult, type Run } from './jobs.ts'
 import type { StepKind } from './schedule.ts'
 import { RUN_DIR, STATE_DIR, TOOLS, agentRules, attachmentList, attachments, errorText, isLive, quote, readConfig, safeName, screenshotRule, takeLock, type Lock } from './session.ts'
@@ -37,7 +37,7 @@ const GUIDELINES = [
 
 type AgentMessage = { role: string; customType?: string; content?: unknown; stopReason?: string; errorMessage?: string }
 
-const lockKey = (project: string): string => `pi:${project}`
+const lockKey = (key: string): string => `pi:${key}`
 const fullName = (model: { provider: string; id: string }): string => `${model.provider}/${model.id}`
 
 function log(line: string): void {
@@ -137,6 +137,7 @@ export class PiBridge extends JobSession {
     private readonly pi: ExtensionAPI,
     private readonly ctx: ExtensionContext,
     private readonly lock: Lock,
+    private readonly name: string,
   ) {
     super(log)
     this.mailbox.wait('start', '', this.sendQueue)
@@ -149,7 +150,7 @@ export class PiBridge extends JobSession {
   }
 
   async start(config: Config, reason: string): Promise<void> {
-    this.starting = this.open(config, this.ctx.cwd, 'pi', project => isLive(lockKey(project)), () => this.disposed, process.env.MATTERMOST_SESSION)
+    this.starting = this.open(config, this.name, 'pi', key => isLive(lockKey(key)), () => this.disposed)
     await this.starting
     if (this.disposed) {
       this.ws?.stop()
@@ -526,14 +527,16 @@ export default function (pi: ExtensionAPI): void {
       return
     }
     mkdirSync(RUN_DIR, { recursive: true, mode: 0o700 })
-    const session = sessionKey(ctx.cwd, process.env.MATTERMOST_SESSION)
-    const lock = await takeLock(lockKey(session))
+    const name = sessionLabel(process.env.MATTERMOST_SESSION)
+    const lock = name ? await takeLock(lockKey(name)) : undefined
     if (lock === undefined) {
-      log(`passive: another session has ${session}`)
+      const reason = name ? `another session has the name ${name}` : 'MATTERMOST_SESSION is not set'
+      log(`passive: ${reason}`)
+      ctx.ui.notify(`Mattermost is not connected: ${reason}`, 'warning')
       return
     }
     registerSessionTools(pi, () => bridge)
-    const started = new PiBridge(pi, ctx, lock)
+    const started = new PiBridge(pi, ctx, lock, name)
     bridge = started
     started.start(config, event.reason).catch(err => {
       log(`passive: start failed: ${errorText(err)}`)

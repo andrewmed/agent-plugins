@@ -79,8 +79,9 @@ The flag must be the last one, because it takes more than one value.
 Notes:
 
 - Only an interactive session connects. `claude -p` does not.
-- The session of a project folder gets the bot `<folder>-cc` and a public channel with the same name. The plugin adds you to the channel.
-- A second session in the same folder does not connect, unless it has a name. `MATTERMOST_SESSION=review claude` starts a session with the bot `<folder>-review-cc`, which has its own channel, job and follow state. The plugin reads the variable only from the environment. It changes the name to lowercase and to a maximum of 10 characters. If the variable is empty or not set, the session has no name and gets the bot `<folder>-cc`. A second session with the same name in the same folder does not connect.
+- A session needs a name in the environment variable `MATTERMOST_SESSION`: `MATTERMOST_SESSION=review claude`. The session gets the bot `<name>-cc` and a public channel with the same name. The plugin adds you to the channel. The bot has its own job and follow state. The folder is not a part of the name.
+- The plugin reads the variable only from the environment. It changes the name to lowercase, removes the characters before the first letter, and keeps a maximum of 19 characters. A session with no name, or with a name that has no letter, does not connect: the log of the MCP server has the line `passive: MATTERMOST_SESSION is not set`, and each tool of the plugin gives this error. A session does not connect when a running session on the same computer has the same name, in each folder.
+- A bot that an older version made for a folder continues when the name is the same as the name of that folder.
 - If Claude Code says `Channels are not currently available` and you have `DISABLE_TELEMETRY` or `DO_NOT_TRACK` set, export `CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF=1` in the environment that starts `claude`. A value in `settings.json` is too late.
 - The typed commands (`/compact`, `/clear`, `/context`, `/model`, `/effort`, `! <command>`) need a way to type into the terminal. On macOS the plugin uses `TIOCSTI`. On Linux, where the kernel usually has `TIOCSTI` off, they work only in a [herdr](https://herdr.dev) pane.
 - The tools of the plugin have the names `mcp__plugin_mattermost_mattermost__<tool>`.
@@ -193,8 +194,7 @@ pi install git:github.com/andrewmed/agent-plugins
 Notes:
 
 - Only the interactive mode connects. `pi -p`, the JSON mode and the RPC mode do not.
-- The session of a project folder gets the bot `<folder>-pi`. Claude Code and pi in the same folder have different bots and channels.
-- `MATTERMOST_SESSION=review pi` starts a second session in the same folder with the bot `<folder>-review-pi`, as in Claude Code.
+- `MATTERMOST_SESSION=review pi` gives the bot `review-pi`. The rules of the name are the same as in Claude Code. Claude Code and pi with the same name have different bots and channels. With no name, or with a name that a running pi session has, pi shows a warning and does not connect.
 - The log is `~/.config/mattermost-agents/pi.log`.
 - Pi has no permission system, so there are no permission prompts in the channel.
 

@@ -1,6 +1,5 @@
 import { createHash } from 'crypto'
 import { existsSync } from 'fs'
-import { basename } from 'path'
 
 export type Post = {
   id: string
@@ -195,29 +194,19 @@ export class Socket {
 
 const NAME_SUFFIX: Record<Harness, string> = { claude: 'cc', pi: 'pi' }
 
-export function botUsername(project: string, suffix = '', harness: Harness = 'claude'): string {
+export function botUsername(name: string, suffix = '', harness: Harness = 'claude'): string {
   const tail = `${suffix ? `-${suffix}` : ''}-${NAME_SUFFIX[harness]}`
-  const name = basename(project)
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^[^a-z]+/, '')
-    .slice(0, 22 - tail.length)
-    .replace(/[-_]+$/, '')
-  return `${name || 'agent'}${tail}`
+  return `${name.slice(0, 22 - tail.length).replace(/[-_]+$/, '')}${tail}`
 }
 
+// The result is the session key: the lock, the marker of the bot and the bot name use it. It is empty when the name has no letter.
 export function sessionLabel(name = ''): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^[-_]+/, '')
-    .slice(0, 10)
+    .replace(/^[^a-z]+/, '')
+    .slice(0, 19)
     .replace(/[-_]+$/, '')
-}
-
-export function sessionKey(project: string, name = ''): string {
-  const label = sessionLabel(name)
-  return label ? `${project}#${label}` : project
 }
 
 function markerPrefix(host: string, harness: Harness): string {
@@ -247,14 +236,16 @@ async function removeGoneSessions(
   teamId: string,
   bots: any[],
   host: string,
-  isLive: (project: string) => boolean | Promise<boolean>,
+  isLive: (key: string) => boolean | Promise<boolean>,
   log: (line: string) => void,
   harness: Harness,
 ): Promise<void> {
   for (const bot of bots) {
     const session = markedSession(String(bot.description ?? ''), host, harness)
-    const folder = session?.replace(/#[a-z0-9_-]+$/, '')
-    if (!session || bot.delete_at || existsSync(session) || existsSync(folder!) || (await isLive(session))) continue
+    // Only a marker of a version before 2026-11-20 has a folder. A bot with a name in its marker stays.
+    if (!session?.startsWith('/')) continue
+    const folder = session.replace(/#[a-z0-9_-]+$/, '')
+    if (bot.delete_at || existsSync(session) || existsSync(folder) || (await isLive(session))) continue
     try {
       const channel = await admin.api('GET', `/teams/${teamId}/channels/name/${bot.username}`).catch(() => undefined)
       if (channel?.creator_id === bot.user_id) await admin.api('DELETE', `/channels/${channel.id}`)
@@ -266,21 +257,36 @@ async function removeGoneSessions(
   }
 }
 
-async function findOrCreateBot(admin: Client, bots: any[], project: string, name: string, marker: string, harness: Harness): Promise<any> {
-  const found = bots.find(bot => bot.description === marker)
+async function findOrCreateBot(
+  admin: Client,
+  bots: any[],
+  name: string,
+  host: string,
+  isLive: (key: string) => boolean | Promise<boolean>,
+  harness: Harness,
+): Promise<any> {
+  const marker = sessionMarker(host, name, harness)
+  // Migration of 2026-11-20 from the folder to the name: the bot that has this name and the marker of a folder gets
+  // the marker of the name. Delete `old` when each bot of a session in use has the marker of a name.
+  const old = bots.find(bot => bot.username === botUsername(name, '', harness) && markedSession(String(bot.description ?? ''), host, harness)?.startsWith('/'))
+  const found = bots.find(bot => bot.description === marker) ?? old
   if (found) {
+    if (found === old) {
+      if (await isLive(markedSession(old.description, host, harness)!)) throw new Error(`a session of an old version has the bot ${old.username}`)
+      await admin.api('PUT', `/bots/${old.user_id}`, { description: marker })
+    }
     if (found.delete_at) await admin.api('POST', `/bots/${found.user_id}/enable`)
     return found
   }
   const hash = createHash('sha256').update(marker).digest('hex').slice(0, 3)
-  for (const suffix of [name, name ? `${name}-${hash}` : hash]) {
-    const username = botUsername(project, suffix, harness)
+  for (const suffix of ['', hash]) {
+    const username = botUsername(name, suffix, harness)
     const label = NAME_SUFFIX[harness]
     const display_name = `${username.slice(0, -label.length - 1)} · ${label}`
     try {
       return await admin.api('POST', '/bots', { username, display_name, description: marker })
     } catch (err) {
-      if (!(err instanceof ApiError) || err.status >= 500 || suffix !== name) throw err
+      if (!(err instanceof ApiError) || err.status >= 500 || suffix) throw err
     }
   }
 }
@@ -307,11 +313,10 @@ export async function ensureChannel(
 export async function provision(
   config: Config,
   host: string,
-  project: string,
-  isLive: (project: string) => boolean | Promise<boolean>,
+  name: string,
+  isLive: (key: string) => boolean | Promise<boolean>,
   log: (line: string) => void,
   harness: Harness = 'claude',
-  name = '',
 ): Promise<Identity> {
   const admin = new Client(config.url)
   await admin.login(config.user, config.password)
@@ -320,7 +325,7 @@ export async function provision(
     const teamId: string = team.id
     const bots = await listBots(admin)
     await removeGoneSessions(admin, teamId, bots, host, isLive, log, harness)
-    const bot = await findOrCreateBot(admin, bots, project, sessionLabel(name), sessionMarker(host, sessionKey(project, name), harness), harness)
+    const bot = await findOrCreateBot(admin, bots, name, host, isLive, harness)
     const made = await admin.api('POST', `/users/${bot.user_id}/tokens`, { description: 'mattermost-agents session' })
     const old = await admin.api<any[]>('GET', `/users/${bot.user_id}/tokens?per_page=200`)
     await admin.api('POST', `/teams/${teamId}/members`, { team_id: teamId, user_id: bot.user_id })

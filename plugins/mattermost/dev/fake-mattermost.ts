@@ -108,6 +108,11 @@ async function api(req: Request, path: string): Promise<Response> {
     users.set(id, { id, username: body.username, is_bot: true, description: body.description, display_name: body.display_name, delete_at: 0 })
     return json({ user_id: id, username: body.username, display_name: body.display_name, description: body.description, delete_at: 0 }, 201)
   }
+  if ((m = /^\/bots\/([^/]+)$/.exec(path)) && method === 'PUT') {
+    const bot = users.get(m[1]!)!
+    if (body.description !== undefined) bot.description = body.description
+    return json({ user_id: bot.id, username: bot.username, description: bot.description })
+  }
   if ((m = /^\/bots\/([^/]+)\/(enable|disable)$/.exec(path)) && method === 'POST') {
     const bot = users.get(m[1]!)!
     bot.delete_at = m[2] === 'disable' ? Date.now() : 0

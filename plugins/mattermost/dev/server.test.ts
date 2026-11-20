@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { Bridge, HELP_TEXT, Mailbox, jobStepKind, parseVerdict, terminalCommand } from '../server.ts'
 import { TranscriptReader, assistantTexts, bashOutput, commandOutput, withLast, type Entry } from '../transcript.ts'
 import { FOLLOW_LIMIT, LOOP_LIMIT, MAX_POST, assertSendable, attachments, canReply, chunk, isNormalPost, mentionsBot, quote, readFollow, route, safeFileName, sessionName, takeLock, untilStarted, type RouteContext } from '../session.ts'
-import { ApiError, Socket, botUsername, markedSession, provision, sessionKey, sessionMarker, type Post } from '../mattermost.ts'
+import { ApiError, Socket, botUsername, markedSession, provision, sessionLabel, sessionMarker, type Post } from '../mattermost.ts'
 import { firstDue, readState } from '../schedule.ts'
 import { appendFileSync, existsSync, mkdtempSync, writeFileSync } from 'fs'
 import { hostname, tmpdir } from 'os'
@@ -78,15 +78,13 @@ test('mentionsBot checks the whole name', () => {
 })
 
 describe('botUsername', () => {
-  test('name and agent type', () => expect(botUsername('/home/user/code/ai')).toBe('ai-cc'))
-  test('lowercase and permitted characters', () => expect(botUsername('/x/My Project.v2')).toBe('my-project-v2-cc'))
+  test('name and agent type', () => expect(botUsername('ai')).toBe('ai-cc'))
   test('at most 22 characters', () => {
-    const name = botUsername('/x/a-very-long-repository-name-here', 'abc')
+    expect(botUsername(sessionLabel('a-very-long-repository-name-here'))).toBe('a-very-long-reposit-cc')
+    const name = botUsername(sessionLabel('a-very-long-repository-name-here'), 'abc')
     expect(name.length).toBeLessThanOrEqual(22)
     expect(name.endsWith('-abc-cc')).toBe(true)
   })
-  test('starts with a letter', () => expect(botUsername('/x/2fast')).toBe('fast-cc'))
-  test('no letters', () => expect(botUsername('/x/1234')).toBe('agent-cc'))
 })
 
 test('the session marker gives back the session of this host only', () => {
@@ -339,13 +337,16 @@ describe('untilStarted', () => {
   })
 })
 
-describe('sessionKey', () => {
-  test('no name gives the folder', () => {
-    expect(sessionKey('/x/ai')).toBe('/x/ai')
-    expect(sessionKey('/x/ai', '')).toBe('/x/ai')
-    expect(sessionKey('/x/ai', '!!')).toBe('/x/ai')
+describe('sessionLabel', () => {
+  test('no name and a name with no letter give an empty label', () => {
+    expect(sessionLabel()).toBe('')
+    expect(sessionLabel('')).toBe('')
+    expect(sessionLabel('!!')).toBe('')
+    expect(sessionLabel('1234')).toBe('')
   })
-  test('a name is added in lowercase with permitted characters', () => expect(sessionKey('/x/ai', 'Code Review')).toBe('/x/ai#code-revie'))
+  test('lowercase and permitted characters', () => expect(sessionLabel('My Project.v2')).toBe('my-project-v2'))
+  test('starts with a letter', () => expect(sessionLabel('2fast')).toBe('fast'))
+  test('at most 19 characters', () => expect(sessionLabel('a-very-long-repository-name-here')).toBe('a-very-long-reposit'))
 })
 
 describe('provision', () => {
@@ -389,17 +390,17 @@ describe('provision', () => {
     return calls
   }
 
-  const mine = { user_id: 'bot', username: 'ai-cc', display_name: 'ai', description: sessionMarker('mac', '/x/ai'), delete_at: 0 }
+  const mine = { user_id: 'bot', username: 'ai-cc', display_name: 'ai', description: sessionMarker('mac', 'ai'), delete_at: 0 }
 
   test('the old token is revoked only after the setup is complete', async () => {
     const calls = stub(undefined, [mine])
-    await provision(config, 'mac', '/x/ai', () => false, () => {})
+    await provision(config, 'mac', 'ai', () => false, () => {})
     expect(calls.indexOf('POST /users/tokens/revoke')).toBeGreaterThan(calls.lastIndexOf('POST /channels'))
   })
 
   test('a failure in the setup keeps the old token', async () => {
     const calls = stub('POST /channels', [mine])
-    await expect(provision(config, 'mac', '/x/ai', () => false, () => {})).rejects.toThrow()
+    await expect(provision(config, 'mac', 'ai', () => false, () => {})).rejects.toThrow()
     expect(calls).not.toContain('POST /users/tokens/revoke')
     expect(calls).toContain('POST /users/logout')
   })
@@ -408,41 +409,62 @@ describe('provision', () => {
 
   test('a gone session is removed, but not a channel that its bot did not make', async () => {
     const calls = stub(undefined, [mine, gone])
-    await provision(config, 'mac', '/x/ai', () => false, () => {})
+    await provision(config, 'mac', 'ai', () => false, () => {})
     expect(calls).toContain('POST /bots/b2/disable')
     expect(calls).not.toContain('DELETE /channels/other')
   })
 
   test('a live session is not removed', async () => {
     const calls = stub(undefined, [mine, gone])
-    await provision(config, 'mac', '/x/ai', project => project === '/no/such/dir', () => {})
+    await provision(config, 'mac', 'ai', key => key === '/no/such/dir', () => {})
     expect(calls).not.toContain('POST /bots/b2/disable')
   })
 
-  test('a session with a name gets its own bot, and the session with no name keeps its bot', async () => {
+  test('the bot has the name of the session with no folder, and a second start keeps the bot', async () => {
     stub(undefined, [mine])
-    await provision(config, 'mac', '/x/ai', () => false, () => {}, 'claude', 'Review')
-    expect(made).toEqual([{ username: 'ai-review-cc', display_name: 'ai-review · cc', description: sessionMarker('mac', '/x/ai#review') }])
+    await provision(config, 'mac', 'review', () => false, () => {})
+    expect(made).toEqual([{ username: 'review-cc', display_name: 'review · cc', description: sessionMarker('mac', 'review') }])
     made.length = 0
-    await provision(config, 'mac', '/x/ai', () => false, () => {}, 'claude', '')
+    await provision(config, 'mac', 'ai', () => false, () => {})
     expect(made).toEqual([])
   })
 
-  test('a taken name with a session name keeps the session name', async () => {
+  test('a bot name that a different host has gets a hash', async () => {
     stub(undefined, [])
-    taken = ['ai-review-cc']
-    await provision(config, 'mac', '/x/ai', () => false, () => {}, 'claude', 'review')
-    expect(made.map(bot => bot.username)).toEqual(['ai-review-cc', expect.stringMatching(/^ai-review-[0-9a-f]{3}-cc$/)])
+    taken = ['review-cc']
+    await provision(config, 'mac', 'review', () => false, () => {})
+    expect(made.map(bot => bot.username)).toEqual(['review-cc', expect.stringMatching(/^review-[0-9a-f]{3}-cc$/)])
   })
 
-  test('a stopped session with a name is not removed while its folder exists', async () => {
-    const here = import.meta.dir
-    const named = { user_id: 'b5', username: 'dev-review-cc', description: sessionMarker('mac', `${here}#review`), delete_at: 0 }
+  const here = import.meta.dir
+
+  test('a stopped session is not removed: with a name, or with a folder that exists', async () => {
+    const named = { user_id: 'b4', username: 'no-such-dir-cc', description: sessionMarker('mac', 'no-such-dir'), delete_at: 0 }
+    const folder = { user_id: 'b5', username: 'dev-review-cc', description: sessionMarker('mac', `${here}#review`), delete_at: 0 }
     const lost = { user_id: 'b6', username: 'gone-review-cc', description: sessionMarker('mac', '/no/such/dir#review'), delete_at: 0 }
-    const calls = stub(undefined, [mine, named, lost])
-    await provision(config, 'mac', '/x/ai', () => false, () => {})
+    const calls = stub(undefined, [mine, named, folder, lost])
+    await provision(config, 'mac', 'ai', () => false, () => {})
+    expect(calls).not.toContain('POST /bots/b4/disable')
     expect(calls).not.toContain('POST /bots/b5/disable')
     expect(calls).toContain('POST /bots/b6/disable')
+  })
+
+  const old = { user_id: 'b7', username: 'dev-cc', description: sessionMarker('mac', here), delete_at: 0 }
+
+  test('the bot of a folder with the same name continues with the marker of the name', async () => {
+    const calls = stub(undefined, [mine, old, { ...old, user_id: 'b8', description: sessionMarker('linux', here) }])
+    await provision(config, 'mac', 'dev', () => false, () => {})
+    expect(made).toEqual([])
+    expect(calls).toContain('PUT /bots/b7')
+    expect(calls).toContain('POST /users/b7/tokens')
+    expect(calls).not.toContain('PUT /bots/b8')
+  })
+
+  test('the bot of a folder is not taken from a live session of an old version', async () => {
+    const calls = stub(undefined, [mine, old])
+    await expect(provision(config, 'mac', 'dev', key => key === here, () => {})).rejects.toThrow('a session of an old version has the bot dev-cc')
+    expect(calls).not.toContain('PUT /bots/b7')
+    expect(calls).not.toContain('POST /users/b7/tokens')
   })
 })
 
@@ -991,7 +1013,7 @@ describe('Bridge', () => {
     test('a model that comes before the start post is in the post', async () => {
       const { bridge, calls } = startBridge()
       bridge.sessionSettings({ hook_event_name: 'SessionStart', source: 'startup', model: 'm' })
-      await bridge.connect({}, '/x')
+      await bridge.connect({}, '/x', 'x')
       await bridge.out
       expect(calls).toEqual([`POST /posts :large_green_circle: Session started on \`${hostname()}\` in \`/x\`, model \`m\``])
     })
@@ -1000,14 +1022,14 @@ describe('Bridge', () => {
       const { bridge, calls } = startBridge()
       bridge.followPath = join(mkdtempSync(join(tmpdir(), 'mm-follow-')), 'bot.json')
       writeFileSync(bridge.followPath, JSON.stringify({ from: ['b-cc'], purpose: 'p', report: true }))
-      await bridge.connect({}, '/x')
+      await bridge.connect({}, '/x', 'x')
       await bridge.out
       expect(calls).toEqual([`POST /posts :large_green_circle: Session started on \`${hostname()}\` in \`/x\`\n:eyes: Follows @b-cc, with report: p`])
     })
 
     test('the model comes by an edit, and later values change nothing', async () => {
       const { bridge, calls } = startBridge()
-      await bridge.connect({}, '/x')
+      await bridge.connect({}, '/x', 'x')
       bridge.sessionSettings({ hook_event_name: 'SessionStart', source: 'startup', model: 'm' })
       await bridge.out
       bridge.sessionSettings({ hook_event_name: 'UserPromptSubmit' })

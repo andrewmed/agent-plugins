@@ -355,6 +355,7 @@ export const TOOLS = [
 ]
 
 export abstract class Session {
+  passive = 'it has no Mattermost bot'
   protected id: Identity | undefined
   protected api: Client | undefined
   protected ws: Socket | undefined
@@ -393,14 +394,13 @@ export abstract class Session {
 
   protected async open(
     config: Config,
-    project: string,
+    name: string,
     harness: Harness,
-    live: (project: string) => boolean | Promise<boolean>,
+    live: (key: string) => boolean | Promise<boolean>,
     stopped: () => boolean = () => false,
-    name = '',
   ): Promise<void> {
     this.config = config
-    this.id = await untilStarted(() => provision(config, hostname(), project, live, this.log, harness, name), this.log, stopped)
+    this.id = await untilStarted(() => provision(config, hostname(), name, live, this.log, harness), this.log, stopped)
     this.api = new Client(config.url, this.id.botToken)
     this.ws = new Socket(config.url, this.id.botToken, event => this.onEvent(event), this.log)
     this.ws.start()
@@ -600,7 +600,7 @@ export abstract class Session {
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<string> {
-    if (!this.id) throw new Error('this session is passive: it has no Mattermost bot')
+    if (!this.id) throw new Error(`this session is passive: ${this.passive}`)
     switch (name) {
       case 'send':
         if (this.taskFromAgent()) throw new Error('the current task came from an agent, and only a task from the owner can use send. Tell the owner what you want to send.')

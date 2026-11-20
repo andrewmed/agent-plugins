@@ -441,3 +441,28 @@ Tested: `bun test dev`. In Node 26, from `bun build --target=node`: the times of
 Not tested with a real Claude Code: a session that is busy when the job post arrives, a model turn that calls no tool, a permission prompt for the tool `schedule`, a time of the day that becomes due, a late time of the day, a change of the time zone, and a state file of the old form. The unit tests have these cases, but not the permission prompt. Not tested: a real pi, a model other than `claude-haiku-5-5`, Linux.
 
 Not tested on the production server. Not measured there: that the bot gets the field `timezone` of the owner from `GET /users/<owner id>`, and that the bot gets the `post_edited` event for a post of the owner. The fake server gives the two by assumption, not from a measurement.
+
+## Obligatory session name with no folder, 2026-11-20
+
+Decision of the owner: `MATTERMOST_SESSION` is obligatory, the folder is not a part of the bot name, and the plugin refuses a name that a running session has. A different agent, for example a supervisor, selects the names. No hook reports the error.
+
+Change: this section replaces the section `Session name with MATTERMOST_SESSION, 2026-11-18`.
+
+- The session key is the name after `sessionLabel`: lowercase, only `a-z`, `0-9`, `_` and `-`, a letter first, a maximum of 19 characters. The lock, the marker of the bot and the bot name use this key. The pi lock key is `pi:<name>`. The folder is not in the key, so the same name in two folders is one session.
+- The bot is `<name>-cc` or `<name>-pi`. If a bot of a different host has that user name, the bot gets a hash: `<name>-<hash>-cc`.
+- An empty name: `server.ts` logs `passive: MATTERMOST_SESSION is not set`, and each tool gives `this session is passive: MATTERMOST_SESSION is not set`. A lock that is not free gives `another session has the name <name>` in the two places. `pi.ts` shows the same reason with `ctx.ui.notify`.
+- `removeGoneSessions` examines only a marker that starts with `/`, which is the marker of an older version. A bot with a name in its marker is never removed. Thus the count of bots is the count of names that were used.
+- Migration: when no bot has the marker of the name, `findOrCreateBot` takes the bot with the user name `<name>-cc` and a marker of a folder on this host, and writes the marker of the name with `PUT /bots/<bot id>`. The bot id stays, so the job state and the follow state stay. If the lock of the old key is not free, a session of an older version uses the bot. Then `provision` fails, and `untilStarted` tries again until that session stops.
+
+Method: `dev/fake-mattermost.ts`, which now has `PUT /bots/<bot id>`, and five `bun server.ts` processes with `CLAUDE_CODE_ENTRYPOINT=cli`, `HOME` as an empty folder and the `MM_*` values in the environment. No `claude` process. The fake server had a bot `ai-cc` with the marker of a folder before the first start.
+
+Passed on the fake server:
+
+- The variable not set, and `MATTERMOST_SESSION=1234`: `passive: MATTERMOST_SESSION is not set`. A `tools/call` of `list_sessions` gave `list_sessions failed: this session is passive: MATTERMOST_SESSION is not set`.
+- `MATTERMOST_SESSION=Review` in the folder `a`: `connected as @review-cc`. Then `MATTERMOST_SESSION=review` in the folder `b`: `passive: another session has the name review`, and the same reason from the tool.
+- `MATTERMOST_SESSION=ai`: `connected as @ai-cc`. The bot kept its id, its description became `mm-agent-cc host=<host> session=ai`, and no second bot was made.
+- In Node 26, from `bun build --target=node`: `sessionLabel`, `botUsername`, a second `takeLock` of `pi:<name>` gave no lock, and `provision` gave the same bot `<name>-pi` two times and `<name>-cc` for the harness `claude`.
+
+Tested: `bun test dev`.
+
+Not tested: a real Claude Code or a real pi with or without the variable, the notice of pi, the migration while a session of an older version runs, Linux. Not tested on the production server. Not measured there: that `PUT /bots/<bot id>` with only `description` changes the description, and that the provisioning user has the permission for it.

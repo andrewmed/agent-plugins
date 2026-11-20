@@ -52,7 +52,7 @@ function setup(state: { idle?: boolean; signal?: AbortSignal; commands?: any[]; 
     modelRegistry: { getAvailable: () => state.models ?? [] },
     ui: { setStatus: () => {}, notify: () => {} },
   }
-  const bridge = new PiBridge(pi as any, ctx as any, { release: () => {} }) as any
+  const bridge = new PiBridge(pi as any, ctx as any, { release: () => {} }, 'ai') as any
   bridge.id = { channelId: 'c', ownerUsername: 'owner', botId: 'b', username: 'ai-pi' }
   bridge.config = { ownerId: 'o' }
   bridge.reactionDelayMs = 0
@@ -88,8 +88,8 @@ describe('config', () => {
 })
 
 describe('names', () => {
-  test('a pi bot has its own name', () => expect(botUsername('/x/ai', '', 'pi')).toBe('ai-pi'))
-  test('the default is cc', () => expect(botUsername('/x/ai')).toBe('ai-cc'))
+  test('a pi bot has its own name', () => expect(botUsername('ai', '', 'pi')).toBe('ai-pi'))
+  test('the default is cc', () => expect(botUsername('ai')).toBe('ai-cc'))
   test('each harness sees only its own marker', () => {
     expect(markedSession(sessionMarker('h', '/x', 'pi'), 'h', 'pi')).toBe('/x')
     expect(markedSession(sessionMarker('h', '/x', 'pi'), 'h')).toBeUndefined()
